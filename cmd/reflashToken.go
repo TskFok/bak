@@ -1,6 +1,5 @@
 /*
 Copyright © 2023 NAME HERE <EMAIL ADDRESS>
-
 */
 package cmd
 
@@ -41,7 +40,7 @@ var reflashTokenCmd = &cobra.Command{
 		condition["refresh_token"] = *resp.RefreshToken
 
 		where := make(map[string]interface{})
-		where["id"] = tk.Id
+		where["id"] = token.Id
 
 		res := tk.Update(condition, where)
 

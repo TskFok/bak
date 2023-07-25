@@ -1,0 +1,26 @@
+redis:
+  host: 127.0.0.1:6379
+  user: ""
+  password: ""
+
+baidu_yun:
+  client_id: "**************"
+  client_secret: "**************"
+
+mysql:
+  dsn: root:@tcp(127.0.0.1:3306)/yy?charset=utf8mb4&parseTime=True&loc=Local
+  prefix: ""
+
+app:
+  mode: debug #release(gin.ReleaseMode ) test(gin.TestMode) debug(gin.DebugMode )
+
+jwt:
+  secret:  #jwt的secret
+  expire: 3 #过期时间3小时
+
+logger:
+  file_path: "runtime/"
+vicuna:
+  url: "http://*********"
+openai:
+  token: ""

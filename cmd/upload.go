@@ -143,6 +143,8 @@ func panfilecreate(accessToken string, uplodidTmp string, size int, blockList st
 
 /** 分片上传*/
 func pcssuperfile2(token string, uploadid string, partseq string, localPath string, bakPath string) {
+RETRY:
+	fmt.Printf("切片%s", partseq)
 	accessToken := token
 	type_ := "tmpfile"
 	file, err := os.Open(localPath)
@@ -158,6 +160,8 @@ func pcssuperfile2(token string, uploadid string, partseq string, localPath stri
 	if err != nil {
 		fmt.Printf("Error when calling `FileuploadApi.Pcssuperfile2``: %v\n", err)
 		fmt.Printf("Full HTTP response: %v\n", r)
+
+		goto RETRY
 	}
 	// response from `Pcssuperfile2`: string
 	fmt.Printf("Response from `FileuploadApi.Pcssuperfile2`: %v\n", resp)

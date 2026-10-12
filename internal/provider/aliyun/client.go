@@ -257,6 +257,7 @@ func (c *Client) Upload(ctx context.Context, localPath, remotePath string) error
 	}
 	var created struct {
 		FileID       string `json:"file_id"`
+		UploadID     string `json:"upload_id"`
 		PartInfoList []struct {
 			UploadURL string `json:"upload_url"`
 		} `json:"part_info_list"`
@@ -273,7 +274,8 @@ func (c *Client) Upload(ctx context.Context, localPath, remotePath string) error
 	if err != nil {
 		return err
 	}
-	if len(created.PartInfoList) == 0 || created.PartInfoList[0].UploadURL == "" {
+	if created.FileID == "" || created.UploadID == "" ||
+		len(created.PartInfoList) == 0 || created.PartInfoList[0].UploadURL == "" {
 		return errUpload
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, created.PartInfoList[0].UploadURL, f)
@@ -290,5 +292,10 @@ func (c *Client) Upload(ctx context.Context, localPath, remotePath string) error
 	if res.StatusCode < 200 || res.StatusCode > 299 {
 		return errUpload
 	}
-	return nil
+	// 官方流程：所有分片 PUT 成功后必须调用 complete，文件才算上传完成。
+	return c.post(ctx, "/adrive/v1.0/openFile/complete", map[string]any{
+		"drive_id":  driveID,
+		"file_id":   created.FileID,
+		"upload_id": created.UploadID,
+	}, nil, errUpload)
 }

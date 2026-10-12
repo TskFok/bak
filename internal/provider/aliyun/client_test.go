@@ -25,7 +25,11 @@ type fakeServer struct {
 	lists    []map[string]any
 	putBody  string
 	putAuth  string
-	existing map[string]string // name -> file_id for children of root
+	events   []string // 请求顺序：put / complete
+	complete []map[string]any
+	// completeStatus 非 0 时 complete 返回该状态码。
+	completeStatus int
+	existing       map[string]string // name -> file_id for children of root
 }
 
 func newFake(t *testing.T, f *fakeServer) *httptest.Server {
@@ -55,11 +59,23 @@ func newFake(t *testing.T, f *fakeServer) *httptest.Server {
 				_, _ = w.Write([]byte(`{"file_id":"folder1","type":"folder"}`))
 				return
 			}
-			_, _ = w.Write([]byte(`{"file_id":"file1","part_info_list":[{"upload_url":"` + srv.URL + `/put"}]}`))
+			_, _ = w.Write([]byte(`{"file_id":"file1","upload_id":"up1","part_info_list":[{"upload_url":"` + srv.URL + `/put"}]}`))
 		case "/put":
 			f.putBody = string(body)
 			f.putAuth = r.Header.Get("Authorization")
+			f.events = append(f.events, "put")
 			w.WriteHeader(http.StatusOK)
+		case "/adrive/v1.0/openFile/complete":
+			var m map[string]any
+			_ = json.Unmarshal(body, &m)
+			m["_auth"] = r.Header.Get("Authorization")
+			f.complete = append(f.complete, m)
+			f.events = append(f.events, "complete")
+			if f.completeStatus != 0 {
+				w.WriteHeader(f.completeStatus)
+				return
+			}
+			_, _ = w.Write([]byte(`{"file_id":"file1"}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -91,6 +107,55 @@ func TestClientFlow(t *testing.T) {
 	eq(t, "file", last["type"])
 	eq(t, "a.txt", last["name"])
 	eq(t, "folder1", last["parent_file_id"])
+
+	eq(t, "put,complete", strings.Join(f.events, ","))
+	eq(t, 1, len(f.complete))
+	eq(t, "d1", f.complete[0]["drive_id"])
+	eq(t, "file1", f.complete[0]["file_id"])
+	eq(t, "up1", f.complete[0]["upload_id"])
+	eq(t, "Bearer tok-secret", f.complete[0]["_auth"])
+}
+
+func uploadFixture(t *testing.T, f *fakeServer, token string) error {
+	t.Helper()
+	srv := newFake(t, f)
+	local := filepath.Join(t.TempDir(), "a.txt")
+	noErr(t, os.WriteFile(local, []byte("x"), 0o600))
+	c := New(srv.URL, token, srv.Client())
+	return c.Upload(context.Background(), local, "/a.txt")
+}
+
+func TestUploadCompleteFailureHidesToken(t *testing.T) {
+	err := uploadFixture(t, &fakeServer{completeStatus: http.StatusInternalServerError}, "tok-secret")
+	isTrue(t, err != nil && err.Error() == "上传失败", "want 上传失败")
+	isTrue(t, !strings.Contains(err.Error(), "tok-secret"), "token leaked")
+}
+
+func TestUploadCompleteUnauthorized(t *testing.T) {
+	err := uploadFixture(t, &fakeServer{completeStatus: http.StatusUnauthorized}, "tok-secret")
+	isTrue(t, err != nil && err.Error() == "授权失败", "want 授权失败")
+	isTrue(t, !strings.Contains(err.Error(), "tok-secret"), "token leaked")
+}
+
+func TestUploadMissingUploadIDFails(t *testing.T) {
+	var srv *httptest.Server
+	completed := false
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/adrive/v1.0/user/getDriveInfo":
+			_, _ = w.Write([]byte(`{"default_drive_id":"d1"}`))
+		case "/adrive/v1.0/openFile/create":
+			_, _ = w.Write([]byte(`{"file_id":"file1","part_info_list":[{"upload_url":"` + srv.URL + `/put"}]}`))
+		case "/adrive/v1.0/openFile/complete":
+			completed = true
+		}
+	}))
+	defer srv.Close()
+	local := filepath.Join(t.TempDir(), "a.txt")
+	noErr(t, os.WriteFile(local, []byte("x"), 0o600))
+	err := New(srv.URL, "tok-secret", srv.Client()).Upload(context.Background(), local, "/a.txt")
+	isTrue(t, err != nil && err.Error() == "上传失败", "want 上传失败")
+	isTrue(t, !completed, "complete must not be called")
 }
 
 func TestEnsureDirSkipsExistingFolder(t *testing.T) {
@@ -119,7 +184,7 @@ func TestUploadPutFailure(t *testing.T) {
 		case "/adrive/v1.0/user/getDriveInfo":
 			_, _ = w.Write([]byte(`{"default_drive_id":"d1"}`))
 		case "/adrive/v1.0/openFile/create":
-			_, _ = w.Write([]byte(`{"file_id":"file1","part_info_list":[{"upload_url":"` + srv.URL + `/put"}]}`))
+			_, _ = w.Write([]byte(`{"file_id":"file1","upload_id":"up1","part_info_list":[{"upload_url":"` + srv.URL + `/put"}]}`))
 		default:
 			w.WriteHeader(http.StatusInternalServerError)
 		}

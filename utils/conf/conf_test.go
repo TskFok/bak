@@ -156,23 +156,66 @@ func TestExplicitConfigPathOverridesDSN(t *testing.T) {
 	}
 }
 
-func TestExplicitConfigMissingPanics(t *testing.T) {
+func TestExplicitConfigMissingUsesEmbedded(t *testing.T) {
 	t.Setenv("BAIDUBAK_MYSQL_DSN", "")
 	t.Setenv("BAIDUBAK_REDIS_HOST", "")
-	t.Setenv("BAIDUBAK_CONFIG", filepath.Join(t.TempDir(), "no-such.yaml"))
+	t.Setenv("BAIDUBAK_CONFIG", filepath.Join(t.TempDir(), ".env"))
 	withNoDefaultMount(t)
 
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected panic")
-		}
-	}()
 	InitConfig()
+
+	if !strings.Contains(global.MysqlDsn, "127.0.0.1:3306") {
+		t.Fatalf("dsn = %q", global.MysqlDsn)
+	}
+}
+
+func TestDotEnvFileOverridesDSNAndRedis(t *testing.T) {
+	t.Setenv("BAIDUBAK_MYSQL_DSN", "")
+	t.Setenv("BAIDUBAK_REDIS_HOST", "")
+	t.Setenv("BAIDUBAK_REDIS_USER", "")
+	t.Setenv("BAIDUBAK_REDIS_PASSWORD", "")
+	path := writeRaw(t, ".env", ""+
+		"BAIDUBAK_MYSQL_DSN=from-dotenv@tcp(10.0.0.8:3306)/yy\n"+
+		"BAIDUBAK_REDIS_HOST=10.0.0.9:6379\n"+
+		"BAIDUBAK_REDIS_USER=dotenv-user\n"+
+		"BAIDUBAK_REDIS_PASSWORD=dotenv-secret\n")
+	t.Setenv("BAIDUBAK_CONFIG", path)
+	withNoDefaultMount(t)
+
+	InitConfig()
+
+	if global.MysqlDsn != "from-dotenv@tcp(10.0.0.8:3306)/yy" {
+		t.Fatalf("dsn = %q", global.MysqlDsn)
+	}
+	if global.RedisHost != "10.0.0.9:6379" {
+		t.Fatalf("redis host = %q", global.RedisHost)
+	}
+	if global.RedisUser != "dotenv-user" || global.RedisPassword != "dotenv-secret" {
+		t.Fatalf("redis auth = %q %q", global.RedisUser, global.RedisPassword)
+	}
+}
+
+func TestEnvOverridesDotEnvFile(t *testing.T) {
+	path := writeRaw(t, ".env", "BAIDUBAK_MYSQL_DSN=from-dotenv@tcp(10.0.0.8:3306)/yy\n")
+	t.Setenv("BAIDUBAK_CONFIG", path)
+	t.Setenv("BAIDUBAK_MYSQL_DSN", "from-env@tcp(10.1.1.1:3306)/yy")
+	withNoDefaultMount(t)
+
+	InitConfig()
+
+	if global.MysqlDsn != "from-env@tcp(10.1.1.1:3306)/yy" {
+		t.Fatalf("dsn = %q", global.MysqlDsn)
+	}
 }
 
 func writeConfig(t *testing.T, body string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "conf.yaml")
+	return writeRaw(t, "conf.yaml", body)
+}
+
+func writeRaw(t *testing.T, name, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}

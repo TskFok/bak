@@ -29,8 +29,9 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       BAIDUBAK_ALLOW_UNSPECIFIED_ADDR: "1"
-      BAIDUBAK_MYSQL_DSN: ${BAIDUBAK_MYSQL_DSN:-}
-      BAIDUBAK_REDIS_HOST: ${BAIDUBAK_REDIS_HOST:-}
+      # 没有宿主机 .env 时使用这些默认值。应用不要求容器内存在 /app/.env。
+      BAIDUBAK_MYSQL_DSN: "${BAIDUBAK_MYSQL_DSN:-root:@tcp(host.docker.internal:3306)/yy?charset=utf8mb4&parseTime=True&loc=Local}"
+      BAIDUBAK_REDIS_HOST: "${BAIDUBAK_REDIS_HOST:-host.docker.internal:6379}"
       BAIDUBAK_REDIS_USER: ${BAIDUBAK_REDIS_USER:-}
       BAIDUBAK_REDIS_PASSWORD: ${BAIDUBAK_REDIS_PASSWORD:-}
     depends_on:

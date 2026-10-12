@@ -2,6 +2,8 @@ package backup
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -57,6 +59,29 @@ func TestTickSkipsBusyAndManualDoesNotMark(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(st.marked) != 1 || st.marked[0] != 2 {
+		t.Fatalf("marked %v", st.marked)
+	}
+}
+
+func TestTickContinuesAfterRunError(t *testing.T) {
+	now := time.Date(2026, 10, 12, 10, 0, 0, 0, time.Local)
+	st := &schedMem{
+		tasks: []Task{
+			{ID: 1, Enabled: true, ScheduleTime: "09:00"},
+			{ID: 2, Enabled: true, ScheduleTime: "09:00"},
+		},
+		running: map[uint]bool{},
+	}
+	err := Tick(context.Background(), st, func(ctx context.Context, task Task) error {
+		if task.ID == 1 {
+			return errors.New("上传失败")
+		}
+		return nil
+	}, now)
+	if err == nil || !strings.Contains(err.Error(), "上传失败") {
+		t.Fatalf("err=%v", err)
+	}
+	if len(st.marked) != 2 || st.marked[0] != 1 || st.marked[1] != 2 {
 		t.Fatalf("marked %v", st.marked)
 	}
 }

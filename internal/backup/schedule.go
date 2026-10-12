@@ -42,6 +42,7 @@ func Tick(ctx context.Context, st ScheduleStore, run func(ctx context.Context, t
 	if err != nil {
 		return err
 	}
+	var runErrs []error
 	for _, task := range tasks {
 		running, err := st.HasRunning(ctx, task.ID)
 		if err != nil {
@@ -54,8 +55,8 @@ func Tick(ctx context.Context, st ScheduleStore, run func(ctx context.Context, t
 			return err
 		}
 		if err := run(ctx, task); err != nil && !errors.Is(err, ErrBusy) {
-			return err
+			runErrs = append(runErrs, err)
 		}
 	}
-	return nil
+	return errors.Join(runErrs...)
 }

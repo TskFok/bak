@@ -1,3 +1,4 @@
 .idea
 runtime
 utils/conf/conf.yaml.local
+.worktrees/

@@ -113,6 +113,21 @@ func TestValidateAddr(t *testing.T) {
 	}
 }
 
+func TestValidateContainerAddr(t *testing.T) {
+	if err := ValidateContainerAddr("0.0.0.0:8080"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateContainerAddr("[::]:8080"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateContainerAddr("127.0.0.1:8080"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateContainerAddr("192.168.1.10:8080"); err == nil {
+		t.Fatal("expected reject")
+	}
+}
+
 type memAuthUsers struct{ users []auth.User }
 
 func (m *memAuthUsers) Count(ctx context.Context) (int64, error) { return int64(len(m.users)), nil }

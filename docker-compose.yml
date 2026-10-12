@@ -1,7 +1,13 @@
 # 先构建镜像：make docker-build-linux-amd64
 # arm64 镜像标签是 baidubak:linux-arm64，由 make docker-build-linux-arm64 生成。
-# 面板监听 127.0.0.1:8080，配置中的 MySQL 与 Redis 也是 127.0.0.1。
-# 面板使用宿主机网络，因此默认连接宿主机上已经在跑的 MySQL（3306）和 Redis（6379）。
+# 面板通过 ports 映射到宿主机 127.0.0.1。改端口时设置 BAIDUBAK_PORT，例如 BAIDUBAK_PORT=18080 docker compose up -d。
+# 容器内固定监听 0.0.0.0:8080，端口映射才能转到进程；宿主机只绑定 127.0.0.1。
+# 容器使用 bridge 网络，容器内的 127.0.0.1 不是宿主机。
+# 连接宿主机上的 MySQL / Redis 时使用 host.docker.internal（extra_hosts 指向宿主机网关）。
+# 这些服务若只监听 127.0.0.1，容器仍然访问不到，需要让它们监听 docker 网桥能到达的地址。
+# 启用自带 MySQL / Redis 时，映射到宿主机的端口由 BAIDUBAK_MYSQL_PORT、BAIDUBAK_REDIS_PORT 控制，默认 3306 和 6379，只绑定 127.0.0.1。
+# 应用通过服务名连接容器，端口仍是 3306 / 6379，与宿主机映射端口无关：
+#   BAIDUBAK_MYSQL_DSN='root:@tcp(mysql:3306)/yy?charset=utf8mb4&parseTime=True&loc=Local' BAIDUBAK_REDIS_HOST=redis:6379
 # 某一侧没有现成服务时再启用对应 profile，两侧都没有时一起启用：
 #   docker compose --profile mysql up -d
 #   docker compose --profile redis up -d
@@ -11,14 +17,18 @@
 #   BAIDUBAK_REDIS_HOST=10.0.0.8:6379 BAIDUBAK_REDIS_USER=default BAIDUBAK_REDIS_PASSWORD=secret docker compose up -d
 #   或在 baidubak.volumes 挂载配置：/path/to/conf.yaml:/app/conf.yaml:ro
 #   挂到其他路径时设置 BAIDUBAK_CONFIG。
-# 此示例面向 Linux 宿主机。
 
 services:
   baidubak:
     image: baidubak:linux-amd64
     platform: linux/amd64
-    network_mode: host
+    ports:
+      - "127.0.0.1:${BAIDUBAK_PORT:-8080}:8080"
+    command: ["serve", "--addr", "0.0.0.0:8080"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
+      BAIDUBAK_ALLOW_UNSPECIFIED_ADDR: "1"
       BAIDUBAK_MYSQL_DSN: ${BAIDUBAK_MYSQL_DSN:-}
       BAIDUBAK_REDIS_HOST: ${BAIDUBAK_REDIS_HOST:-}
       BAIDUBAK_REDIS_USER: ${BAIDUBAK_REDIS_USER:-}
@@ -39,7 +49,7 @@ services:
       MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
       MYSQL_DATABASE: yy
     ports:
-      - "127.0.0.1:3306:3306"
+      - "127.0.0.1:${BAIDUBAK_MYSQL_PORT:-3306}:3306"
     volumes:
       - mysql-data:/var/lib/mysql
     healthcheck:
@@ -52,7 +62,7 @@ services:
     profiles: ["redis"]
     image: redis:7-alpine
     ports:
-      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:${BAIDUBAK_REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s

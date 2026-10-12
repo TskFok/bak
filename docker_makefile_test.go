@@ -44,8 +44,11 @@ func TestEnvExample(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	mustContain(t, text, "BAIDUBAK_MYSQL_DSN=root:@tcp(127.0.0.1:3306)/yy?charset=utf8mb4&parseTime=True&loc=Local")
-	mustContain(t, text, "BAIDUBAK_REDIS_HOST=127.0.0.1:6379")
+	mustContain(t, text, "BAIDUBAK_PORT=8080")
+	mustContain(t, text, "BAIDUBAK_MYSQL_PORT=3306")
+	mustContain(t, text, "BAIDUBAK_REDIS_PORT=6379")
+	mustContain(t, text, "BAIDUBAK_MYSQL_DSN=root:@tcp(host.docker.internal:3306)/yy?charset=utf8mb4&parseTime=True&loc=Local")
+	mustContain(t, text, "BAIDUBAK_REDIS_HOST=host.docker.internal:6379")
 	mustContain(t, text, "BAIDUBAK_REDIS_USER=")
 	mustContain(t, text, "BAIDUBAK_REDIS_PASSWORD=")
 }
@@ -58,7 +61,14 @@ func TestDockerComposeExample(t *testing.T) {
 	text := string(data)
 	mustContain(t, text, "image: baidubak:linux-amd64")
 	mustContain(t, text, "platform: linux/amd64")
-	mustContain(t, text, "network_mode: host")
+	if strings.Contains(text, "network_mode:") {
+		t.Fatalf("compose 仍使用 network_mode:\n%s", text)
+	}
+	mustContain(t, text, `127.0.0.1:${BAIDUBAK_PORT:-8080}:8080`)
+	mustContain(t, text, `command: ["serve", "--addr", "0.0.0.0:8080"]`)
+	mustContain(t, text, `BAIDUBAK_ALLOW_UNSPECIFIED_ADDR: "1"`)
+	mustContain(t, text, "host.docker.internal:host-gateway")
+	mustContain(t, text, "BAIDUBAK_PORT")
 	mustContain(t, text, "BAIDUBAK_MYSQL_DSN")
 	mustContain(t, text, "BAIDUBAK_REDIS_HOST")
 	mustContain(t, text, "BAIDUBAK_REDIS_USER")
@@ -68,8 +78,10 @@ func TestDockerComposeExample(t *testing.T) {
 	mustContain(t, text, `profiles: ["mysql"]`)
 	mustContain(t, text, `profiles: ["redis"]`)
 	mustContain(t, text, "MYSQL_DATABASE: yy")
-	mustContain(t, text, "127.0.0.1:3306:3306")
-	mustContain(t, text, "127.0.0.1:6379:6379")
+	mustContain(t, text, "BAIDUBAK_MYSQL_PORT")
+	mustContain(t, text, "BAIDUBAK_REDIS_PORT")
+	mustContain(t, text, "127.0.0.1:${BAIDUBAK_MYSQL_PORT:-3306}:3306")
+	mustContain(t, text, "127.0.0.1:${BAIDUBAK_REDIS_PORT:-6379}:6379")
 }
 
 func TestDockerfileCrossCompiles(t *testing.T) {

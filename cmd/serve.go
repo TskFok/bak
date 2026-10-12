@@ -29,7 +29,7 @@ var serveCmd = &cobra.Command{
 	Long:  "在回环地址上启动备份面板，并每 30 秒检查一次定时任务。",
 	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		if err := server.ValidateAddr(serveAddr); err != nil {
+		if err := validateServeAddr(serveAddr); err != nil {
 			fmt.Fprintln(os.Stderr, "监听地址无效:", err)
 			os.Exit(1)
 		}
@@ -79,6 +79,13 @@ var serveCmd = &cobra.Command{
 			os.Exit(1)
 		}
 	},
+}
+
+func validateServeAddr(addr string) error {
+	if os.Getenv("BAIDUBAK_ALLOW_UNSPECIFIED_ADDR") == "1" {
+		return server.ValidateContainerAddr(addr)
+	}
+	return server.ValidateAddr(addr)
 }
 
 func init() {

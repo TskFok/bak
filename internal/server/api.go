@@ -86,6 +86,15 @@ type Deps struct {
 
 // NewMux 返回完整的 HTTP 处理器：公开的 setup/login 路由和需要会话的业务路由。
 func NewMux(deps Deps) http.Handler {
+	h, _ := NewMuxWithRunner(deps)
+	return h
+}
+
+// ScheduleRunner 按手动运行的方式执行一个定时任务，触发方式记为 schedule。
+type ScheduleRunner func(ctx context.Context, task backup.Task) error
+
+// NewMuxWithRunner 返回 NewMux 的处理器，以及与它共享并发锁的定时任务执行函数。
+func NewMuxWithRunner(deps Deps) (http.Handler, ScheduleRunner) {
 	if deps.Providers == nil {
 		deps.Providers = defaultProviders(deps.ChunkDir)
 	}
@@ -114,7 +123,7 @@ func NewMux(deps Deps) http.Handler {
 		pr.Get("/api/runs", a.listRuns)
 		pr.Get("/api/runs/{id}", a.getRun)
 	})
-	return r
+	return r, a.runScheduled
 }
 
 type api struct {
@@ -784,28 +793,72 @@ func (a *api) runTask(w http.ResponseWriter, req *http.Request) {
 
 // failRun 把无法开始的手动运行记为 failed，响应仍是 200。
 func (a *api) failRun(ctx context.Context, w http.ResponseWriter, task backup.Task, summary string) {
-	busy, err := a.deps.Store.HasRunning(ctx, task.ID)
+	run, err := a.recordFailure(ctx, task, "manual", summary)
+	if errors.Is(err, backup.ErrBusy) {
+		http.Error(w, backup.ErrBusy.Error(), http.StatusConflict)
+		return
+	}
 	if err != nil {
 		serverError(w)
 		return
 	}
-	if busy {
-		http.Error(w, backup.ErrBusy.Error(), http.StatusConflict)
-		return
+	writeJSON(w, http.StatusOK, runView(run))
+}
+
+// recordFailure 为无法开始的运行写入一条 failed 记录；任务正在运行时返回 ErrBusy。
+func (a *api) recordFailure(ctx context.Context, task backup.Task, trigger, summary string) (backup.Run, error) {
+	busy, err := a.deps.Store.HasRunning(ctx, task.ID)
+	if err != nil {
+		return backup.Run{}, err
 	}
-	now := a.deps.Now()
-	run := backup.Run{TaskID: task.ID, Trigger: "manual", Status: "running", StartedAt: now}
+	if busy {
+		return backup.Run{}, backup.ErrBusy
+	}
+	run := backup.Run{TaskID: task.ID, Trigger: trigger, Status: "running", StartedAt: a.deps.Now()}
 	if err := a.deps.Store.CreateRun(ctx, &run); err != nil {
-		serverError(w)
-		return
+		return backup.Run{}, err
 	}
 	done := a.deps.Now()
 	run.Status, run.ErrorSummary, run.FinishedAt = "failed", summary, &done
 	if err := a.deps.Store.FinishRun(ctx, run); err != nil {
-		serverError(w)
-		return
+		return backup.Run{}, err
 	}
-	writeJSON(w, http.StatusOK, runView(run))
+	return run, nil
+}
+
+// runScheduled 与 runTask 走同一条路径：读网盘、必要时刷新令牌、再 RunTask，触发方式为 schedule。
+// 无法开始的运行记为 failed，不返回错误；只有存储层故障或备份本身出错才返回错误。
+func (a *api) runScheduled(ctx context.Context, task backup.Task) error {
+	if !a.tryLock(task.ID) {
+		return backup.ErrBusy
+	}
+	defer a.unlock(task.ID)
+
+	acct, err := a.deps.Store.GetCloud(ctx, task.CloudAccountID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		_, err = a.recordFailure(ctx, task, "schedule", "任务关联的网盘不存在")
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	secrets, err := a.openSecrets(acct)
+	if err != nil {
+		_, err = a.recordFailure(ctx, task, "schedule", "网盘配置无法读取，请重新保存")
+		return err
+	}
+	secrets, err = a.freshSecrets(ctx, acct.Provider, secrets, &acct)
+	if err != nil {
+		_, err = a.recordFailure(ctx, task, "schedule", err.Error())
+		return err
+	}
+	p, err := a.deps.Providers(acct.Provider, secrets)
+	if err != nil {
+		_, err = a.recordFailure(ctx, task, "schedule", "无法连接网盘")
+		return err
+	}
+	_, err = backup.RunTask(ctx, a.deps.Store, task, p, "schedule", a.deps.Now())
+	return err
 }
 
 // ---- 运行记录 ----

@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"BaiduYunPanBak/global"
+	"BaiduYunPanBak/internal/store"
 	"BaiduYunPanBak/utils/cache"
 	"BaiduYunPanBak/utils/conf"
 	"BaiduYunPanBak/utils/database"
@@ -15,4 +16,7 @@ func Init() {
 	global.RedisClient = cache.InitRedis()
 	//mysql
 	global.DataBase = database.InitMysql()
+	if err := store.AutoMigrate(global.DataBase); err != nil {
+		panic(err)
+	}
 }

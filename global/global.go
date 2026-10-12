@@ -14,3 +14,5 @@ var RedisClient *redis.Client
 var DataBase *gorm.DB
 var BaiduYunClientId string
 var BaiduYunClientSecret string
+var JwtSecret string
+var JwtExpire int

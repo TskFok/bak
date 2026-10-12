@@ -1,0 +1,156 @@
+package store
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"BaiduYunPanBak/internal/auth"
+	"BaiduYunPanBak/internal/backup"
+
+	"github.com/glebarez/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
+)
+
+func TestSetupTransactionAndStaleRuns(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{
+		NamingStrategy: schema.NamingStrategy{SingularTable: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := AutoMigrate(db); err != nil {
+		t.Fatal(err)
+	}
+	s := NewGorm(db)
+	ctx := context.Background()
+	if _, err := auth.Setup(ctx, s, "me", "password1", "password1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auth.Setup(ctx, s, "me", "password1", "password1"); err != auth.ErrUserExists {
+		t.Fatalf("got %v", err)
+	}
+	task := backup.Task{Name: "t", LocalDir: "/tmp", RemoteDir: "/bak", ScheduleTime: "09:00", Enabled: true, CloudAccountID: 1}
+	if err := s.CreateTask(ctx, &task); err != nil {
+		t.Fatal(err)
+	}
+	run := &backup.Run{TaskID: task.ID, Trigger: "manual", Status: "running", StartedAt: time.Now()}
+	if err := s.CreateRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FailStaleRuns(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetRun(ctx, run.ID)
+	if err != nil || got.Status != "failed" || got.ErrorSummary != "进程已退出" {
+		t.Fatalf("%+v %v", got, err)
+	}
+	if err := s.DeleteTask(ctx, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetRun(ctx, run.ID); err != nil {
+		t.Fatal("run deleted with task")
+	}
+}
+
+func newTestStore(t *testing.T, name string) *GormStore {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open("file:"+name+"?mode=memory&cache=shared"), &gorm.Config{
+		NamingStrategy: schema.NamingStrategy{SingularTable: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := AutoMigrate(db); err != nil {
+		t.Fatal(err)
+	}
+	return NewGorm(db)
+}
+
+func TestLatestSuccessAndScheduling(t *testing.T) {
+	s := newTestStore(t, "latest")
+	ctx := context.Background()
+	task := backup.Task{Name: "t", LocalDir: "/tmp", RemoteDir: "/bak", ScheduleTime: "09:00", Enabled: true, CloudAccountID: 1}
+	off := backup.Task{Name: "off", LocalDir: "/tmp", RemoteDir: "/bak", ScheduleTime: "09:00", CloudAccountID: 1}
+	for _, tk := range []*backup.Task{&task, &off} {
+		if err := s.CreateTask(ctx, tk); err != nil {
+			t.Fatal(err)
+		}
+	}
+	enabled, err := s.ListEnabled(ctx)
+	if err != nil || len(enabled) != 1 || enabled[0].ID != task.ID {
+		t.Fatalf("%+v %v", enabled, err)
+	}
+	day := time.Date(2026, 10, 12, 15, 4, 0, 0, time.Local)
+	if err := s.MarkScheduled(ctx, task.ID, day); err != nil {
+		t.Fatal(err)
+	}
+	enabled, _ = s.ListEnabled(ctx)
+	if enabled[0].LastScheduledOn == nil {
+		t.Fatal("last_scheduled_on not saved")
+	}
+	y, m, d := enabled[0].LastScheduledOn.In(time.Local).Date()
+	if y != 2026 || m != 10 || d != 12 {
+		t.Fatalf("got %v", enabled[0].LastScheduledOn)
+	}
+
+	run := &backup.Run{TaskID: task.ID, Trigger: "manual", Status: "running", StartedAt: time.Now()}
+	if err := s.CreateRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	if busy, err := s.HasRunning(ctx, task.ID); err != nil || !busy {
+		t.Fatalf("busy=%v err=%v", busy, err)
+	}
+	mod := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	big := int64(1) << 40
+	save := func(status, fp string, size int64) {
+		t.Helper()
+		if err := s.SaveFileResult(ctx, run.ID, task.ID, backup.FileResult{RelativePath: "a.txt", Status: status, SourceFingerprint: fp, Size: size, ModTime: mod}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save("success", "fp1", 1)
+	save("success", "fp1", big)
+	save("failed", "fp1", 3)
+	save("success", "fp2", 4)
+	got, ok, err := s.LatestSuccess(ctx, task.ID, "a.txt", "fp1")
+	if err != nil || !ok || got.Size != big || !got.ModTime.UTC().Equal(mod) {
+		t.Fatalf("%+v %v %v", got, ok, err)
+	}
+	if _, ok, err := s.LatestSuccess(ctx, task.ID, "b.txt", "fp1"); err != nil || ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+
+	fin := time.Now()
+	run.Status, run.FinishedAt, run.SuccessCount = "success", &fin, 2
+	if err := s.FinishRun(ctx, *run); err != nil {
+		t.Fatal(err)
+	}
+	if busy, _ := s.HasRunning(ctx, task.ID); busy {
+		t.Fatal("still running")
+	}
+	runs, err := s.ListRuns(ctx, 10)
+	if err != nil || len(runs) != 1 || runs[0].Status != "success" || runs[0].SuccessCount != 2 || runs[0].FinishedAt == nil {
+		t.Fatalf("%+v %v", runs, err)
+	}
+}
+
+func TestUpsertCloud(t *testing.T) {
+	s := newTestStore(t, "cloud")
+	ctx := context.Background()
+	if err := s.UpsertCloud(ctx, &CloudAccount{Provider: "webdav", DisplayName: "a", SecretBlob: "x", Status: "disconnected"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpsertCloud(ctx, &CloudAccount{Provider: "webdav", DisplayName: "b", SecretBlob: "y", Status: "connected"}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.ListClouds(ctx)
+	if err != nil || len(list) != 1 || list[0].DisplayName != "b" || list[0].Status != "connected" || list[0].CreatedAt == nil {
+		t.Fatalf("%+v %v", list, err)
+	}
+	got, err := s.GetCloud(ctx, list[0].ID)
+	if err != nil || got.SecretBlob != "y" {
+		t.Fatalf("%+v %v", got, err)
+	}
+}

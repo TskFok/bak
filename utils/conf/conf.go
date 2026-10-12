@@ -26,4 +26,9 @@ func InitConfig() {
 	global.MysqlPrefix = viper.Get("mysql.prefix").(string)
 	global.BaiduYunClientId = viper.Get("baidu_yun.client_id").(string)
 	global.BaiduYunClientSecret = viper.Get("baidu_yun.client_secret").(string)
+	global.JwtSecret = viper.GetString("jwt.secret")
+	global.JwtExpire = viper.GetInt("jwt.expire")
+	if global.JwtExpire <= 0 {
+		global.JwtExpire = 3
+	}
 }

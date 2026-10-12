@@ -20,6 +20,12 @@ type AuthDeps struct {
 
 func NewAuthMux(deps AuthDeps) http.Handler {
 	r := chi.NewRouter()
+	registerAuthRoutes(r, deps)
+	return r
+}
+
+// registerAuthRoutes 注册 setup、login、logout、me 路由，供 NewAuthMux 和 NewMux 共用。
+func registerAuthRoutes(r chi.Router, deps AuthDeps) {
 	r.Get("/api/setup/status", func(w http.ResponseWriter, req *http.Request) {
 		n, err := deps.Users.Count(req.Context())
 		if err != nil {
@@ -93,7 +99,6 @@ func NewAuthMux(deps AuthDeps) http.Handler {
 			writeJSON(w, http.StatusOK, map[string]uint{"userId": req.Context().Value(userIDKey).(uint)})
 		})
 	})
-	return r
 }
 
 type ctxKey int

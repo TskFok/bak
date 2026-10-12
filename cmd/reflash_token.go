@@ -5,9 +5,9 @@ package cmd
 
 import (
 	"BaiduYunPanBak/global"
+	"BaiduYunPanBak/internal/baidutoken"
 	"BaiduYunPanBak/model"
 	"BaiduYunPanBak/tool/openapi"
-	"BaiduYunPanBak/utils/cache"
 	"context"
 	"fmt"
 	"github.com/spf13/cobra"
@@ -32,25 +32,18 @@ var reflashTokenCmd = &cobra.Command{
 		if err != nil {
 			fmt.Printf("Error when calling `AuthApi.OauthTokenRefreshToken``: %v\n", err)
 			fmt.Printf("Full HTTP response: %v\n", r)
+			return
 		}
 
-		condition := make(map[string]interface{})
-		condition["expires_in"] = *resp.ExpiresIn
-		condition["access_token"] = *resp.AccessToken
-		condition["refresh_token"] = *resp.RefreshToken
-
-		where := make(map[string]interface{})
-		where["id"] = token.Id
-
-		res := tk.Update(condition, where)
-
-		if res {
-			fmt.Printf("刷新成功")
-
-			cache.Set("access_token", *resp.AccessToken, int(*resp.ExpiresIn))
-		} else {
-			fmt.Printf("刷新失败")
+		refresh := resp.GetRefreshToken()
+		if refresh == "" {
+			refresh = refreshToken
 		}
+		if err := baidutoken.Save(resp.GetAccessToken(), refresh, int(resp.GetExpiresIn()), saveBaiduAccount); err != nil {
+			fmt.Printf("刷新失败: %v\n", err)
+			return
+		}
+		fmt.Printf("刷新成功")
 	},
 }
 

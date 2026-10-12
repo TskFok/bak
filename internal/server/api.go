@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"os"
 	"path"
@@ -15,17 +16,15 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"BaiduYunPanBak/global"
 	"BaiduYunPanBak/internal/backup"
+	"BaiduYunPanBak/internal/baidutoken"
 	"BaiduYunPanBak/internal/cloudacct"
 	"BaiduYunPanBak/internal/provider"
 	"BaiduYunPanBak/internal/provider/aliyun"
 	"BaiduYunPanBak/internal/provider/baidu"
 	"BaiduYunPanBak/internal/provider/webdav"
 	"BaiduYunPanBak/internal/store"
-	"BaiduYunPanBak/model"
 	"BaiduYunPanBak/tool/openapi"
-	"BaiduYunPanBak/utils/cache"
 
 	"github.com/go-chi/chi/v5"
 	"gorm.io/gorm"
@@ -960,7 +959,7 @@ func (liveTokens) Exchange(ctx context.Context, name string, s cloudacct.Secrets
 		}
 		s.AccessToken, s.RefreshToken = resp.GetAccessToken(), resp.GetRefreshToken()
 		s.ExpiresAt = time.Now().Add(time.Duration(resp.GetExpiresIn()) * time.Second)
-		syncLegacyBaiduToken(s)
+		saveBaiduToken(s.AccessToken, s.RefreshToken, int(resp.GetExpiresIn()))
 		return s, nil
 	}
 	return s, errors.New("不支持的网盘")
@@ -989,29 +988,16 @@ func (liveTokens) Refresh(ctx context.Context, name string, s cloudacct.Secrets)
 			s.RefreshToken = rt
 		}
 		s.ExpiresAt = time.Now().Add(time.Duration(resp.GetExpiresIn()) * time.Second)
-		syncLegacyBaiduToken(s)
+		saveBaiduToken(s.AccessToken, s.RefreshToken, int(resp.GetExpiresIn()))
 		return s, nil
 	}
 	return s, errors.New("不支持的网盘")
 }
 
-// syncLegacyBaiduToken 让旧的 upload 命令继续可用：写 tokens 表和 Redis access_token。
-// 数据库或 Redis 未初始化时直接跳过。
-func syncLegacyBaiduToken(s cloudacct.Secrets) {
-	expiresIn := int32(time.Until(s.ExpiresAt) / time.Second)
-	if global.DataBase != nil {
-		cur := model.Token{}.Find()
-		if cur.Id != 0 {
-			model.Token{}.Update(
-				map[string]interface{}{"access_token": s.AccessToken, "refresh_token": s.RefreshToken, "expires_in": expiresIn},
-				map[string]interface{}{"id": cur.Id},
-			)
-		} else {
-			tk := &model.Token{AccessToken: s.AccessToken, RefreshToken: s.RefreshToken, ExpiresIn: expiresIn}
-			tk.Create(tk)
-		}
-	}
-	if global.RedisClient != nil {
-		cache.Set("access_token", s.AccessToken, int(expiresIn))
+// saveBaiduToken 交给 baidutoken.Save 写 tokens 表和 Redis，让 upload 命令继续可用。
+// 面板自己保存密文账号，所以这里不传 accountSaver；失败只记日志，不影响授权结果。
+func saveBaiduToken(access, refresh string, expiresIn int) {
+	if err := baidutoken.Save(access, refresh, expiresIn, nil); err != nil {
+		log.Printf("同步百度令牌失败: %v", err)
 	}
 }

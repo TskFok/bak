@@ -2,9 +2,8 @@ package cmd
 
 import (
 	"BaiduYunPanBak/global"
-	"BaiduYunPanBak/model"
+	"BaiduYunPanBak/internal/baidutoken"
 	"BaiduYunPanBak/tool/openapi"
-	"BaiduYunPanBak/utils/cache"
 	"context"
 	"fmt"
 	"github.com/spf13/cobra"
@@ -39,20 +38,11 @@ var flashTokenCmd = &cobra.Command{
 		fmt.Printf("获取session_secret %s", *resp.SessionSecret)
 		fmt.Printf("获取expires_in %d", *resp.ExpiresIn)
 
-		cache.Set("access_token", *resp.AccessToken, int(*resp.ExpiresIn))
-
-		tk := &model.Token{}
-		tk.AccessToken = *resp.AccessToken
-		tk.RefreshToken = *resp.RefreshToken
-		tk.ExpiresIn = *resp.ExpiresIn
-
-		res := tk.Create(tk)
-
-		if res {
-			fmt.Printf("获取token成功")
-		} else {
-			fmt.Printf("获取token失败")
+		if err := baidutoken.Save(resp.GetAccessToken(), resp.GetRefreshToken(), int(resp.GetExpiresIn()), saveBaiduAccount); err != nil {
+			fmt.Printf("获取token失败: %v\n", err)
+			return
 		}
+		fmt.Printf("获取token成功")
 	},
 }
 

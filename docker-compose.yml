@@ -1,0 +1,44 @@
+# 先构建镜像：make docker-build-linux-amd64
+# arm64 镜像标签是 baidubak:linux-arm64，由 make docker-build-linux-arm64 生成。
+# 面板监听 127.0.0.1:8080，配置中的 MySQL 与 Redis 也是 127.0.0.1。
+# 面板使用宿主机网络；数据库和缓存把端口发布到宿主机回环地址。此示例面向 Linux 宿主机。
+
+services:
+  baidubak:
+    image: baidubak:linux-amd64
+    platform: linux/amd64
+    network_mode: host
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      MYSQL_DATABASE: yy
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "--password=", "--silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  mysql-data:

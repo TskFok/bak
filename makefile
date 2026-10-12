@@ -39,3 +39,18 @@ run-mac: mac
 
 update:
 	go mody tidy
+
+IMAGE ?= baidubak
+BUILDER ?= baidubak-builder
+
+.PHONY: docker-builder docker-build-linux-amd64 docker-build-linux-arm64
+
+docker-builder:
+	docker buildx inspect $(BUILDER) >/dev/null 2>&1 || docker buildx create --name $(BUILDER) --driver docker-container >/dev/null
+	docker buildx inspect $(BUILDER) --bootstrap >/dev/null
+
+docker-build-linux-amd64: docker-builder
+	docker buildx build --builder $(BUILDER) --platform linux/amd64 --load -t $(IMAGE):linux-amd64 .
+
+docker-build-linux-arm64: docker-builder
+	docker buildx build --builder $(BUILDER) --platform linux/arm64 --load -t $(IMAGE):linux-arm64 .

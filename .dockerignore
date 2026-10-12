@@ -1,0 +1,11 @@
+.git
+.idea
+.worktrees
+runtime
+dist
+web/node_modules
+web/dist
+**/*_test.go
+utils/conf/conf.yaml.local
+utils/conf/conf.yaml.bak
+docs

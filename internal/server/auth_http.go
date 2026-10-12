@@ -81,15 +81,14 @@ func NewAuthMux(deps AuthDeps) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"username": user.Username})
 	})
-	r.Post("/api/logout", func(w http.ResponseWriter, req *http.Request) {
-		if c, err := req.Cookie("session"); err == nil {
-			_ = deps.Sessions.Delete(req.Context(), c.Value)
-		}
-		http.SetCookie(w, &http.Cookie{Name: "session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode})
-		w.WriteHeader(http.StatusNoContent)
-	})
 	r.Group(func(pr chi.Router) {
 		pr.Use(requireSession(deps))
+		pr.Post("/api/logout", func(w http.ResponseWriter, req *http.Request) {
+			c, _ := req.Cookie("session")
+			_ = deps.Sessions.Delete(req.Context(), c.Value)
+			http.SetCookie(w, &http.Cookie{Name: "session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+			w.WriteHeader(http.StatusNoContent)
+		})
 		pr.Get("/api/me", func(w http.ResponseWriter, req *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]uint{"userId": req.Context().Value(userIDKey).(uint)})
 		})

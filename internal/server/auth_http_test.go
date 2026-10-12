@@ -62,6 +62,45 @@ func TestSetupLoginAndGuard(t *testing.T) {
 	}
 }
 
+func TestLogoutRequiresSession(t *testing.T) {
+	h := NewAuthMux(AuthDeps{Users: &memAuthUsers{}, Sessions: &memSessions{}, SessionTTL: time.Hour})
+	setupBody := []byte(`{"username":"me","password":"password1","confirm":"password1"}`)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/setup", bytes.NewReader(setupBody)))
+	if rec.Code != 200 {
+		t.Fatalf("setup %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/logout", nil))
+	if rec.Code != 401 {
+		t.Fatalf("logout without cookie %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/login", bytes.NewReader([]byte(`{"username":"me","password":"password1"}`))))
+	if rec.Code != 200 {
+		t.Fatalf("login %d", rec.Code)
+	}
+	sessionCookie := rec.Result().Cookies()[0]
+
+	logoutReq := httptest.NewRequest(http.MethodPost, "/api/logout", nil)
+	logoutReq.AddCookie(sessionCookie)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, logoutReq)
+	if rec.Code != 204 {
+		t.Fatalf("logout with session %d", rec.Code)
+	}
+
+	meReq := httptest.NewRequest(http.MethodGet, "/api/me", nil)
+	meReq.AddCookie(sessionCookie)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, meReq)
+	if rec.Code != 401 {
+		t.Fatalf("me after logout %d", rec.Code)
+	}
+}
+
 func TestValidateAddr(t *testing.T) {
 	if err := ValidateAddr("127.0.0.1:8080"); err != nil {
 		t.Fatal(err)

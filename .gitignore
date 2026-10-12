@@ -3,3 +3,4 @@ runtime
 utils/conf/conf.yaml.local
 .worktrees/
 /dist/
+.env

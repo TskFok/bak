@@ -1,21 +1,39 @@
 # 先构建镜像：make docker-build-linux-amd64
 # arm64 镜像标签是 baidubak:linux-arm64，由 make docker-build-linux-arm64 生成。
 # 面板监听 127.0.0.1:8080，配置中的 MySQL 与 Redis 也是 127.0.0.1。
-# 面板使用宿主机网络；数据库和缓存把端口发布到宿主机回环地址。此示例面向 Linux 宿主机。
+# 面板使用宿主机网络，因此默认连接宿主机上已经在跑的 MySQL（3306）和 Redis（6379）。
+# 某一侧没有现成服务时再启用对应 profile，两侧都没有时一起启用：
+#   docker compose --profile mysql up -d
+#   docker compose --profile redis up -d
+#   docker compose --profile mysql --profile redis up -d
+# 覆盖内置 MySQL DSN 与 Redis 地址时，环境变量优先于挂载文件：
+#   BAIDUBAK_MYSQL_DSN='user:pass@tcp(10.0.0.8:3306)/yy?charset=utf8mb4&parseTime=True&loc=Local' \
+#   BAIDUBAK_REDIS_HOST=10.0.0.8:6379 BAIDUBAK_REDIS_USER=default BAIDUBAK_REDIS_PASSWORD=secret docker compose up -d
+#   或在 baidubak.volumes 挂载配置：/path/to/conf.yaml:/app/conf.yaml:ro
+#   挂到其他路径时设置 BAIDUBAK_CONFIG。
+# 此示例面向 Linux 宿主机。
 
 services:
   baidubak:
     image: baidubak:linux-amd64
     platform: linux/amd64
     network_mode: host
+    environment:
+      BAIDUBAK_MYSQL_DSN: ${BAIDUBAK_MYSQL_DSN:-}
+      BAIDUBAK_REDIS_HOST: ${BAIDUBAK_REDIS_HOST:-}
+      BAIDUBAK_REDIS_USER: ${BAIDUBAK_REDIS_USER:-}
+      BAIDUBAK_REDIS_PASSWORD: ${BAIDUBAK_REDIS_PASSWORD:-}
     depends_on:
       mysql:
         condition: service_healthy
+        required: false
       redis:
         condition: service_healthy
+        required: false
     restart: unless-stopped
 
   mysql:
+    profiles: ["mysql"]
     image: mysql:8.0
     environment:
       MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
@@ -31,6 +49,7 @@ services:
       retries: 20
 
   redis:
+    profiles: ["redis"]
     image: redis:7-alpine
     ports:
       - "127.0.0.1:6379:6379"

@@ -7,5 +7,6 @@ web/node_modules
 web/dist
 **/*_test.go
 utils/conf/conf.yaml.local
+.env
 utils/conf/conf.yaml.bak
 docs

@@ -38,6 +38,18 @@ func TestMakeDockerImageOverride(t *testing.T) {
 	mustContain(t, string(out), "-t registry.example.com/baidubak:linux-amd64")
 }
 
+func TestEnvExample(t *testing.T) {
+	data, err := os.ReadFile(".env.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	mustContain(t, text, "BAIDUBAK_MYSQL_DSN=root:@tcp(127.0.0.1:3306)/yy?charset=utf8mb4&parseTime=True&loc=Local")
+	mustContain(t, text, "BAIDUBAK_REDIS_HOST=127.0.0.1:6379")
+	mustContain(t, text, "BAIDUBAK_REDIS_USER=")
+	mustContain(t, text, "BAIDUBAK_REDIS_PASSWORD=")
+}
+
 func TestDockerComposeExample(t *testing.T) {
 	data, err := os.ReadFile("docker-compose.yml")
 	if err != nil {
@@ -47,6 +59,14 @@ func TestDockerComposeExample(t *testing.T) {
 	mustContain(t, text, "image: baidubak:linux-amd64")
 	mustContain(t, text, "platform: linux/amd64")
 	mustContain(t, text, "network_mode: host")
+	mustContain(t, text, "BAIDUBAK_MYSQL_DSN")
+	mustContain(t, text, "BAIDUBAK_REDIS_HOST")
+	mustContain(t, text, "BAIDUBAK_REDIS_USER")
+	mustContain(t, text, "BAIDUBAK_REDIS_PASSWORD")
+	mustContain(t, text, "/app/conf.yaml")
+	mustContain(t, text, "required: false")
+	mustContain(t, text, `profiles: ["mysql"]`)
+	mustContain(t, text, `profiles: ["redis"]`)
 	mustContain(t, text, "MYSQL_DATABASE: yy")
 	mustContain(t, text, "127.0.0.1:3306:3306")
 	mustContain(t, text, "127.0.0.1:6379:6379")

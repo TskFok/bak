@@ -37,7 +37,7 @@ var flashTokenCmd = &cobra.Command{
 		fmt.Printf("获取session_key %s", *resp.SessionKey)
 		fmt.Printf("获取scope %s", *resp.Scope)
 		fmt.Printf("获取session_secret %s", *resp.SessionSecret)
-		fmt.Printf("获取expires_in %s", *resp.ExpiresIn)
+		fmt.Printf("获取expires_in %d", *resp.ExpiresIn)
 
 		cache.Set("access_token", *resp.AccessToken, int(*resp.ExpiresIn))
 

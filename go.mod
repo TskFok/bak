@@ -3,6 +3,7 @@ module BaiduYunPanBak
 go 1.20
 
 require (
+	github.com/go-chi/chi/v5 v5.0.12
 	github.com/redis/go-redis/v9 v9.0.5
 	github.com/spf13/cobra v1.7.0
 	github.com/spf13/viper v1.16.0

@@ -23,6 +23,8 @@ type fakeUp struct {
 	chunkPaths []string
 	partErr    error
 	errno      int
+	probeErr   error
+	probed     int
 }
 
 func (f *fakeUp) Precreate(ctx context.Context, token, remote string, size int64, blocks []string) (string, error) {
@@ -45,6 +47,11 @@ func (f *fakeUp) Create(ctx context.Context, token, remote, uploadID string, siz
 func (f *fakeUp) Mkdir(ctx context.Context, token, remote string) error {
 	f.mkdirs = append(f.mkdirs, remote)
 	return nil
+}
+
+func (f *fakeUp) Probe(ctx context.Context, token string) error {
+	f.probed++
+	return f.probeErr
 }
 
 func writeLocal(t *testing.T, dir, content string) string {
@@ -138,13 +145,53 @@ func TestOnCreatedAndErrno(t *testing.T) {
 }
 
 func TestTestRequiresToken(t *testing.T) {
-	c := New("", &fakeUp{}, t.TempDir(), 2)
-	err := c.Test(context.Background())
+	up := &fakeUp{}
+	err := New("", up, t.TempDir(), 2).Test(context.Background())
 	if err == nil || err.Error() != "未连接" {
 		t.Fatalf("err %v", err)
 	}
-	if err := New("t", &fakeUp{}, t.TempDir(), 2).Test(context.Background()); err != nil {
+	if up.probed != 0 {
+		t.Fatal("empty token must not call Probe")
+	}
+}
+
+func TestTestCallsProbe(t *testing.T) {
+	up := &fakeUp{}
+	if err := New("t", up, t.TempDir(), 2).Test(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	if up.probed != 1 {
+		t.Fatalf("probed %d", up.probed)
+	}
+	want := errors.New("授权失败")
+	up = &fakeUp{probeErr: want}
+	if err := New("t", up, t.TempDir(), 2).Test(context.Background()); err != want {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestMkdirResult(t *testing.T) {
+	if err := mkdirResult(0); err != nil {
+		t.Fatal(err)
+	}
+	if err := mkdirResult(-8); err != nil {
+		t.Fatalf("errno -8 means exists: %v", err)
+	}
+	err := mkdirResult(31034)
+	if err == nil || err.Error() != "创建目录失败 errno=31034" {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestErrnoFromAPIErrorAndRedact(t *testing.T) {
+	if _, ok := errnoFromAPIError(errors.New("plain")); ok {
+		t.Fatal("plain error has no errno")
+	}
+	if got := redactToken("Get https://x?access_token=a%2Fb&p=1", "a/b"); strings.Contains(got, "a%2Fb") {
+		t.Fatal(got)
+	}
+	if got := redactToken("tok in text", "tok"); strings.Contains(got, "tok") {
+		t.Fatal(got)
 	}
 }
 

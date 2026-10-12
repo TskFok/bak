@@ -182,3 +182,65 @@ func TestUpdateTask(t *testing.T) {
 		t.Fatal("expected not found")
 	}
 }
+
+func TestUpdateRunProgress(t *testing.T) {
+	s := newTestStore(t, "run_progress")
+	ctx := context.Background()
+	task := backup.Task{Name: "t", LocalDir: "/tmp", RemoteDir: "/bak", ScheduleTime: "09:00", Enabled: true, CloudAccountID: 1}
+	if err := s.CreateTask(ctx, &task); err != nil {
+		t.Fatal(err)
+	}
+	run := &backup.Run{TaskID: task.ID, Trigger: "manual", Status: "running", StartedAt: time.Now()}
+	if err := s.CreateRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	run.SuccessCount, run.SkipCount, run.FailCount = 2, 1, 3
+	if err := s.UpdateRunProgress(ctx, *run); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetRun(ctx, run.ID)
+	if err != nil || got.Status != "running" || got.FinishedAt != nil || got.SuccessCount != 2 || got.SkipCount != 1 || got.FailCount != 3 {
+		t.Fatalf("%+v %v", got, err)
+	}
+
+	// 已结束的运行不会被进度更新改写。
+	fin := time.Now()
+	run.Status, run.FinishedAt, run.SuccessCount = "partial", &fin, 5
+	if err := s.FinishRun(ctx, *run); err != nil {
+		t.Fatal(err)
+	}
+	run.SuccessCount = 99
+	if err := s.UpdateRunProgress(ctx, *run); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.GetRun(ctx, run.ID)
+	if got.SuccessCount != 5 || got.Status != "partial" {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestListFileResults(t *testing.T) {
+	s := newTestStore(t, "list_file_results")
+	ctx := context.Background()
+	mod := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	save := func(runID uint, rel, status, errText string) {
+		t.Helper()
+		if err := s.SaveFileResult(ctx, runID, 1, backup.FileResult{RelativePath: rel, Status: status, Error: errText, SourceFingerprint: "fp", ModTime: mod}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	save(1, "z.txt", "success", "")
+	save(2, "other.txt", "success", "")
+	save(1, "a.txt", "failed", "网盘拒绝")
+	got, err := s.ListFileResults(ctx, 1)
+	if err != nil || len(got) != 2 {
+		t.Fatalf("%+v %v", got, err)
+	}
+	if got[0].RelativePath != "z.txt" || got[1].RelativePath != "a.txt" || got[1].Status != "failed" || got[1].Error != "网盘拒绝" {
+		t.Fatalf("order/content %+v", got)
+	}
+	none, err := s.ListFileResults(ctx, 99)
+	if err != nil || none == nil || len(none) != 0 {
+		t.Fatalf("%+v %v", none, err)
+	}
+}

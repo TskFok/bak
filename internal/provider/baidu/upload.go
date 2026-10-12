@@ -24,6 +24,8 @@ type Uploader interface {
 	UploadPart(ctx context.Context, token, remote, uploadID string, seq int, chunkPath string) error
 	Create(ctx context.Context, token, remote, uploadID string, size int64, blocks []string) (fsID, md5 string, errno int, err error)
 	Mkdir(ctx context.Context, token, remote string) error
+	// Probe 用一次只读调用确认 token 可用。
+	Probe(ctx context.Context, token string) error
 }
 
 // Client 实现 provider.Provider。
@@ -48,7 +50,7 @@ func (c *Client) Test(ctx context.Context) error {
 	if c.token == "" {
 		return fmt.Errorf("未连接")
 	}
-	return nil
+	return c.up.Probe(ctx, c.token)
 }
 
 func (c *Client) EnsureDir(ctx context.Context, remoteDir string) error {

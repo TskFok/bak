@@ -30,6 +30,11 @@ type fakeServer struct {
 	// completeStatus 非 0 时 complete 返回该状态码。
 	completeStatus int
 	existing       map[string]string // name -> file_id for children of root
+	// children 按 parent_file_id 返回额外的子项（name/type/file_id）。
+	children map[string][]map[string]string
+	deletes  []map[string]any
+	// deleteStatus 非 0 时 delete 返回该状态码。
+	deleteStatus int
 }
 
 func newFake(t *testing.T, f *fakeServer) *httptest.Server {
@@ -46,6 +51,11 @@ func newFake(t *testing.T, f *fakeServer) *httptest.Server {
 			var m map[string]any
 			_ = json.Unmarshal(body, &m)
 			f.lists = append(f.lists, m)
+			if kids, ok := f.children[m["parent_file_id"].(string)]; ok {
+				data, _ := json.Marshal(map[string]any{"items": kids})
+				_, _ = w.Write(data)
+				return
+			}
 			if id, ok := f.existing[m["parent_file_id"].(string)+"/"]; ok {
 				_, _ = w.Write([]byte(`{"items":[{"file_id":"` + id + `","name":"bak","type":"folder"}]}`))
 				return
@@ -60,6 +70,16 @@ func newFake(t *testing.T, f *fakeServer) *httptest.Server {
 				return
 			}
 			_, _ = w.Write([]byte(`{"file_id":"file1","upload_id":"up1","part_info_list":[{"upload_url":"` + srv.URL + `/put"}]}`))
+		case "/adrive/v1.0/openFile/delete":
+			var m map[string]any
+			_ = json.Unmarshal(body, &m)
+			f.deletes = append(f.deletes, m)
+			f.events = append(f.events, "delete")
+			if f.deleteStatus != 0 {
+				w.WriteHeader(f.deleteStatus)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
 		case "/put":
 			f.putBody = string(body)
 			f.putAuth = r.Header.Get("Authorization")
@@ -114,6 +134,54 @@ func TestClientFlow(t *testing.T) {
 	eq(t, "file1", f.complete[0]["file_id"])
 	eq(t, "up1", f.complete[0]["upload_id"])
 	eq(t, "Bearer tok-secret", f.complete[0]["_auth"])
+}
+
+func TestFirstUploadDoesNotDelete(t *testing.T) {
+	f := &fakeServer{}
+	srv := newFake(t, f)
+	local := filepath.Join(t.TempDir(), "a.txt")
+	noErr(t, os.WriteFile(local, []byte("x"), 0o600))
+	noErr(t, New(srv.URL, "tok", srv.Client()).Upload(context.Background(), local, "/a.txt"))
+	eq(t, 0, len(f.deletes))
+	eq(t, "refuse", f.creates[len(f.creates)-1]["check_name_mode"])
+}
+
+func TestReuploadReplacesSameNameFile(t *testing.T) {
+	f := &fakeServer{children: map[string][]map[string]string{
+		"root": {{"file_id": "old1", "name": "a.txt", "type": "file"}, {"file_id": "other", "name": "keep.txt", "type": "file"}},
+	}}
+	srv := newFake(t, f)
+	local := filepath.Join(t.TempDir(), "a.txt")
+	noErr(t, os.WriteFile(local, []byte("v2"), 0o600))
+	noErr(t, New(srv.URL, "tok-secret", srv.Client()).Upload(context.Background(), local, "/a.txt"))
+	eq(t, 1, len(f.deletes))
+	eq(t, "old1", f.deletes[0]["file_id"])
+	eq(t, "d1", f.deletes[0]["drive_id"])
+	last := f.creates[len(f.creates)-1]
+	eq(t, "refuse", last["check_name_mode"])
+	eq(t, "a.txt", last["name"])
+	eq(t, "delete,put,complete", strings.Join(f.events, ","))
+}
+
+func TestReuploadSameNameFolderIsNotDeleted(t *testing.T) {
+	f := &fakeServer{children: map[string][]map[string]string{
+		"root": {{"file_id": "dir1", "name": "a.txt", "type": "folder"}},
+	}}
+	err := uploadFixture(t, f, "tok-secret")
+	isTrue(t, err != nil && err.Error() == "上传失败", "want 上传失败")
+	eq(t, 0, len(f.deletes))
+	eq(t, 0, len(f.creates))
+}
+
+func TestReuploadDeleteFailureHidesToken(t *testing.T) {
+	kids := map[string][]map[string]string{"root": {{"file_id": "old1", "name": "a.txt", "type": "file"}}}
+	err := uploadFixture(t, &fakeServer{children: kids, deleteStatus: http.StatusInternalServerError}, "tok-secret")
+	isTrue(t, err != nil && err.Error() == "上传失败", "want 上传失败")
+	isTrue(t, !strings.Contains(err.Error(), "tok-secret"), "token leaked")
+	f := &fakeServer{children: kids, deleteStatus: http.StatusUnauthorized}
+	err = uploadFixture(t, f, "tok-secret")
+	isTrue(t, err != nil && err.Error() == "授权失败", "want 授权失败")
+	eq(t, 0, len(f.creates))
 }
 
 func uploadFixture(t *testing.T, f *fakeServer, token string) error {

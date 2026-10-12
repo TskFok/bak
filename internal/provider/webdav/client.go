@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
+	"sync"
 )
 
 type Client struct {
@@ -14,10 +16,13 @@ type Client struct {
 	username string
 	password string
 	http     *http.Client
+
+	mu   sync.Mutex
+	dirs map[string]bool // 已确认存在的集合，key 为 "/" 连接的原始段
 }
 
-func New(url, username, password string) *Client {
-	return &Client{base: strings.TrimRight(url, "/"), username: username, password: password, http: http.DefaultClient}
+func New(baseURL, username, password string) *Client {
+	return &Client{base: strings.TrimRight(baseURL, "/"), username: username, password: password, http: http.DefaultClient, dirs: map[string]bool{}}
 }
 
 func (c *Client) Test(ctx context.Context) error {
@@ -35,33 +40,69 @@ func (c *Client) Test(ctx context.Context) error {
 	return c.statusError(res.StatusCode)
 }
 
+// segments 把远端路径拆成非空段。
+func segments(remote string) []string {
+	var out []string
+	for _, seg := range strings.Split(remote, "/") {
+		if seg != "" {
+			out = append(out, seg)
+		}
+	}
+	return out
+}
+
+// remoteURL 逐段转义路径后拼到 base 后面，base 本身不转义。
+func (c *Client) remoteURL(segs []string) string {
+	var b strings.Builder
+	b.WriteString(c.base)
+	for _, seg := range segs {
+		b.WriteByte('/')
+		b.WriteString(url.PathEscape(seg))
+	}
+	if len(segs) == 0 {
+		b.WriteByte('/')
+	}
+	return b.String()
+}
+
+// EnsureDir 自顶向下逐级 MKCOL，已创建过的目录在本 Client 内不再重复请求。
 func (c *Client) EnsureDir(ctx context.Context, remoteDir string) error {
-	req, err := http.NewRequestWithContext(ctx, "PROPFIND", c.base+remoteDir, nil)
+	return c.ensureSegments(ctx, segments(remoteDir))
+}
+
+func (c *Client) ensureSegments(ctx context.Context, segs []string) error {
+	for i := range segs {
+		key := strings.Join(segs[:i+1], "/")
+		c.mu.Lock()
+		done := c.dirs[key]
+		c.mu.Unlock()
+		if done {
+			continue
+		}
+		if err := c.mkcol(ctx, segs[:i+1]); err != nil {
+			return err
+		}
+		c.mu.Lock()
+		c.dirs[key] = true
+		c.mu.Unlock()
+	}
+	return nil
+}
+
+func (c *Client) mkcol(ctx context.Context, segs []string) error {
+	req, err := http.NewRequestWithContext(ctx, "MKCOL", c.remoteURL(segs), nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("无法访问")
 	}
 	req.SetBasicAuth(c.username, c.password)
-	req.Header.Set("Depth", "0")
 	res, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("无法访问")
 	}
 	defer res.Body.Close()
-	if res.StatusCode >= 200 && res.StatusCode < 300 {
-		return nil
-	}
-	mk, err := http.NewRequestWithContext(ctx, "MKCOL", c.base+remoteDir, nil)
-	if err != nil {
-		return err
-	}
-	mk.SetBasicAuth(c.username, c.password)
-	res, err = c.http.Do(mk)
-	if err != nil {
-		return fmt.Errorf("无法访问")
-	}
-	defer res.Body.Close()
-	if res.StatusCode == http.StatusCreated || res.StatusCode == http.StatusMethodNotAllowed || (res.StatusCode >= 200 && res.StatusCode < 300) {
-		return nil
+	_, _ = io.Copy(io.Discard, res.Body)
+	if res.StatusCode == http.StatusMethodNotAllowed {
+		return nil // 已存在
 	}
 	return c.statusError(res.StatusCode)
 }
@@ -76,9 +117,16 @@ func (c *Client) Upload(ctx context.Context, localPath, remotePath string) error
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.base+remotePath, f)
-	if err != nil {
+	segs := segments(remotePath)
+	if len(segs) == 0 {
+		return fmt.Errorf("无法访问")
+	}
+	if err := c.ensureSegments(ctx, segs[:len(segs)-1]); err != nil {
 		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.remoteURL(segs), f)
+	if err != nil {
+		return fmt.Errorf("无法访问")
 	}
 	req.ContentLength = info.Size()
 	req.SetBasicAuth(c.username, c.password)

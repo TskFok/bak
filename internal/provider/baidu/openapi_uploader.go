@@ -3,10 +3,13 @@ package baidu
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 
 	"BaiduYunPanBak/tool/openapi"
 )
@@ -103,14 +106,64 @@ func (u OpenAPIUploader) Create(ctx context.Context, token, remote, uploadID str
 	return fsID, sum, errno, nil
 }
 
+// errnoDirExists 是百度返回的“目录已存在”错误码。
+const errnoDirExists = -8
+
+// mkdirResult 判定创建目录的 errno：0 与“已存在”都视为成功，使 Mkdir 幂等。
+func mkdirResult(errno int) error {
+	if errno == 0 || errno == errnoDirExists {
+		return nil
+	}
+	return fmt.Errorf("创建目录失败 errno=%d", errno)
+}
+
+// errnoFromAPIError 从 SDK 的非 2xx 错误体里取出 errno。
+func errnoFromAPIError(err error) (int, bool) {
+	var apiErr openapi.GenericOpenAPIError
+	if !errors.As(err, &apiErr) {
+		return 0, false
+	}
+	var body struct {
+		Errno *int `json:"errno"`
+	}
+	if json.Unmarshal(apiErr.Body(), &body) != nil || body.Errno == nil {
+		return 0, false
+	}
+	return *body.Errno, true
+}
+
+// redactToken 去掉错误文本中可能出现的 access_token（传输错误会带上完整 URL）。
+func redactToken(msg, token string) string {
+	if token == "" {
+		return msg
+	}
+	msg = strings.ReplaceAll(msg, token, "***")
+	return strings.ReplaceAll(msg, url.QueryEscape(token), "***")
+}
+
 func (u OpenAPIUploader) Mkdir(ctx context.Context, token, remote string) error {
 	resp, _, err := u.api().FileuploadApi.Xpanfilecreate(ctx).AccessToken(token).Path(remote).
 		Isdir(1).Size(0).Uploadid("").BlockList("[]").Rtype(0).Execute()
 	if err != nil {
-		return err
+		if errno, ok := errnoFromAPIError(err); ok {
+			return mkdirResult(errno)
+		}
+		return fmt.Errorf("创建目录失败: %s", redactToken(err.Error(), token))
+	}
+	if resp.Errno == nil {
+		return nil
+	}
+	return mkdirResult(int(*resp.Errno))
+}
+
+// Probe 调用用户信息接口，确认 token 可用。错误文本不含 token。
+func (u OpenAPIUploader) Probe(ctx context.Context, token string) error {
+	resp, _, err := u.api().UserinfoApi.Xpannasuinfo(ctx).AccessToken(token).Execute()
+	if err != nil {
+		return errors.New("授权失败")
 	}
 	if resp.Errno != nil && *resp.Errno != 0 {
-		return fmt.Errorf("创建目录失败 errno=%d", *resp.Errno)
+		return errors.New("授权失败")
 	}
 	return nil
 }

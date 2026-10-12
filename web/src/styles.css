@@ -528,6 +528,10 @@ th {
   white-space: nowrap;
 }
 
+.cell-wrap {
+  overflow-wrap: anywhere;
+}
+
 tbody tr:last-child td {
   border-bottom: 0;
 }

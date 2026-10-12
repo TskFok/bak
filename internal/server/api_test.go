@@ -27,11 +27,12 @@ const testJWTSecret = "test-jwt-secret"
 
 // memAPIStore 是 APIStore 的内存实现。
 type memAPIStore struct {
-	mu     sync.Mutex
-	clouds []store.CloudAccount
-	tasks  []backup.Task
-	runs   []backup.Run
-	files  []backup.FileResult
+	mu       sync.Mutex
+	clouds   []store.CloudAccount
+	tasks    []backup.Task
+	runs     []backup.Run
+	files    []backup.FileResult
+	fileRuns []uint // 与 files 平行：每条结果所属的 run id
 }
 
 func (m *memAPIStore) HasRunning(ctx context.Context, taskID uint) (bool, error) {
@@ -68,7 +69,29 @@ func (m *memAPIStore) SaveFileResult(ctx context.Context, runID, taskID uint, r 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.files = append(m.files, r)
+	m.fileRuns = append(m.fileRuns, runID)
 	return nil
+}
+func (m *memAPIStore) UpdateRunProgress(ctx context.Context, run backup.Run) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.runs {
+		if m.runs[i].ID == run.ID && m.runs[i].Status == "running" {
+			m.runs[i].SuccessCount, m.runs[i].SkipCount, m.runs[i].FailCount = run.SuccessCount, run.SkipCount, run.FailCount
+		}
+	}
+	return nil
+}
+func (m *memAPIStore) ListFileResults(ctx context.Context, runID uint) ([]backup.FileResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []backup.FileResult{}
+	for i, r := range m.files {
+		if m.fileRuns[i] == runID {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 func (m *memAPIStore) UpsertCloud(ctx context.Context, a *store.CloudAccount) error {
 	m.mu.Lock()
@@ -240,6 +263,50 @@ func (e *apiEnv) do(method, path, body string) *httptest.ResponseRecorder {
 	return rec
 }
 
+// startRun 发起手动备份并要求 202；锁可能还被上一次备份的 goroutine 持有几毫秒，所以 409 时短暂重试。
+func (e *apiEnv) startRun(t *testing.T, runURL string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		rec := e.do(http.MethodPost, runURL, "")
+		if rec.Code == http.StatusConflict && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+			continue
+		}
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("run %d %s", rec.Code, rec.Body.String())
+		}
+		var v map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+}
+
+// waitRun 轮询 GET /api/runs/{id} 直到状态不再是 running，返回最终详情。
+func (e *apiEnv) waitRun(t *testing.T, id uint) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		rec := e.do(http.MethodGet, "/api/runs/"+strconv.Itoa(int(id)), "")
+		if rec.Code != 200 {
+			t.Fatalf("run detail %d %s", rec.Code, rec.Body.String())
+		}
+		var v map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
+			t.Fatal(err)
+		}
+		if v["status"] != "running" {
+			return v
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("run %d still running: %s", id, rec.Body.String())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func (e *apiEnv) saveWebDAV(t *testing.T) {
 	t.Helper()
 	rec := e.do(http.MethodPut, "/api/clouds/webdav", `{"url":"https://dav.example.com/dav","username":"alice","password":"s3cret-pw"}`)
@@ -340,19 +407,18 @@ func TestCloudTaskAPI(t *testing.T) {
 		t.Fatalf("list tasks %d %s", rec.Code, rec.Body.String())
 	}
 
-	// 立即运行成功，触发值为 manual。
-	rec = env.do(http.MethodPost, runURL, "")
-	if rec.Code != 200 {
-		t.Fatalf("run %d %s", rec.Code, rec.Body.String())
+	// 立即运行：202 返回 running 记录，轮询到成功，触发值为 manual。
+	started := env.startRun(t, runURL)
+	if started["status"] != "running" || started["trigger"] != "manual" || started["id"] == nil || started["id"].(float64) == 0 {
+		t.Fatalf("started %v", started)
 	}
 	var run struct {
-		ID           uint   `json:"id"`
-		Status       string `json:"status"`
-		Trigger      string `json:"trigger"`
-		SuccessCount int    `json:"successCount"`
+		ID uint
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &run); err != nil || run.Status != "success" || run.Trigger != "manual" || run.SuccessCount != 1 {
-		t.Fatalf("run body %s", rec.Body.String())
+	run.ID = uint(started["id"].(float64))
+	final := env.waitRun(t, run.ID)
+	if final["status"] != "success" || final["trigger"] != "manual" || final["successCount"].(float64) != 1 {
+		t.Fatalf("run body %v", final)
 	}
 	if len(env.prov.uploaded) != 1 || env.prov.uploaded[0] != "/bak/a.txt" {
 		t.Fatalf("uploaded %v", env.prov.uploaded)
@@ -524,9 +590,10 @@ func TestRunRefreshesTokenOrRecordsFailure(t *testing.T) {
 	}
 
 	// 令牌 5 分钟内到期：先刷新再运行。
-	rec = env.do(http.MethodPost, "/api/tasks/1/run", "")
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"success"`) || env.tokens.refreshed != 1 {
-		t.Fatalf("run after refresh %d %s refreshed=%d", rec.Code, rec.Body.String(), env.tokens.refreshed)
+	started := env.startRun(t, "/api/tasks/1/run")
+	final := env.waitRun(t, uint(started["id"].(float64)))
+	if final["status"] != "success" || env.tokens.refreshed != 1 {
+		t.Fatalf("run after refresh %v refreshed=%d", final, env.tokens.refreshed)
 	}
 	sec, _ := cloudacct.Open(testJWTSecret, env.store.clouds[0].SecretBlob)
 	if sec.AccessToken != "access-new" {
@@ -534,9 +601,10 @@ func TestRunRefreshesTokenOrRecordsFailure(t *testing.T) {
 	}
 
 	// 令牌尚未到期不刷新。
-	rec = env.do(http.MethodPost, "/api/tasks/1/run", "")
-	if rec.Code != 200 || env.tokens.refreshed != 1 {
-		t.Fatalf("second run %d refreshed=%d", rec.Code, env.tokens.refreshed)
+	started = env.startRun(t, "/api/tasks/1/run")
+	env.waitRun(t, uint(started["id"].(float64)))
+	if env.tokens.refreshed != 1 {
+		t.Fatalf("second run refreshed=%d", env.tokens.refreshed)
 	}
 
 	// 刷新失败：返回 200，运行记录为 failed。
@@ -547,7 +615,13 @@ func TestRunRefreshesTokenOrRecordsFailure(t *testing.T) {
 	env.store.clouds[0].SecretBlob = blob
 	env.tokens.refreshErr = errors.New("refresh_token=leaky")
 	before := len(env.prov.uploaded)
-	rec = env.do(http.MethodPost, "/api/tasks/1/run", "")
+	for i := 0; i < 200; i++ { // 等上一次备份的 goroutine 释放锁
+		rec = env.do(http.MethodPost, "/api/tasks/1/run", "")
+		if rec.Code != http.StatusConflict {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"failed"`) || strings.Contains(rec.Body.String(), "leaky") {
 		t.Fatalf("refresh failure %d %s", rec.Code, rec.Body.String())
 	}
@@ -558,4 +632,137 @@ func TestRunRefreshesTokenOrRecordsFailure(t *testing.T) {
 	if last.Status != "failed" || last.Trigger != "manual" || last.FinishedAt == nil || last.ErrorSummary == "" {
 		t.Fatalf("stored run %+v", last)
 	}
+}
+
+func TestRunDetailListsFiles(t *testing.T) {
+	env := newAPIEnv(t)
+	env.store.runs = append(env.store.runs, backup.Run{ID: 1, TaskID: 1, Trigger: "manual", Status: "partial", StartedAt: time.Now()},
+		backup.Run{ID: 2, TaskID: 1, Trigger: "manual", Status: "success", StartedAt: time.Now()})
+	ctx := context.Background()
+	_ = env.store.SaveFileResult(ctx, 1, 1, backup.FileResult{RelativePath: "docs/a.txt", Status: "success"})
+	_ = env.store.SaveFileResult(ctx, 1, 1, backup.FileResult{RelativePath: "b.txt", Status: "failed", Error: "网盘拒绝"})
+	_ = env.store.SaveFileResult(ctx, 2, 1, backup.FileResult{RelativePath: "other.txt", Status: "skipped"})
+
+	rec := env.do(http.MethodGet, "/api/runs/1", "")
+	if rec.Code != 200 {
+		t.Fatalf("detail %d %s", rec.Code, rec.Body.String())
+	}
+	var detail struct {
+		Files []struct {
+			RelativePath string `json:"relativePath"`
+			Status       string `json:"status"`
+			Error        string `json:"error"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if len(detail.Files) != 2 || detail.Files[0].RelativePath != "docs/a.txt" || detail.Files[0].Status != "success" ||
+		detail.Files[1].RelativePath != "b.txt" || detail.Files[1].Status != "failed" || detail.Files[1].Error != "网盘拒绝" {
+		t.Fatalf("files %s", rec.Body.String())
+	}
+
+	// 没有文件时 files 是空数组而不是 null；列表接口不含逐文件数据。
+	var empty map[string]json.RawMessage
+	env.store.runs = append(env.store.runs, backup.Run{ID: 3, TaskID: 1, Status: "success", StartedAt: time.Now()})
+	rec = env.do(http.MethodGet, "/api/runs/3", "")
+	if err := json.Unmarshal(rec.Body.Bytes(), &empty); err != nil || string(empty["files"]) != "[]" {
+		t.Fatalf("empty files %s", rec.Body.String())
+	}
+	rec = env.do(http.MethodGet, "/api/runs", "")
+	if strings.Contains(rec.Body.String(), "relativePath") || strings.Contains(rec.Body.String(), `"files"`) {
+		t.Fatalf("list must not carry files: %s", rec.Body.String())
+	}
+}
+
+// blockingProvider 在 Upload 里等待放行，用来证明 POST /run 不会等备份结束。
+type blockingProvider struct {
+	fakeProvider
+	release chan struct{}
+	entered chan struct{}
+}
+
+func (b *blockingProvider) Upload(ctx context.Context, localPath, remotePath string) error {
+	select {
+	case b.entered <- struct{}{}:
+	default:
+	}
+	<-b.release
+	return b.fakeProvider.Upload(ctx, localPath, remotePath)
+}
+
+func TestManualRunReturns202WhileWalking(t *testing.T) {
+	env := newAPIEnv(t)
+	bp := &blockingProvider{release: make(chan struct{}), entered: make(chan struct{}, 1)}
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			close(bp.release)
+		}
+	}
+	defer release()
+	env.h = NewMux(Deps{
+		AuthDeps:  AuthDeps{Users: &memAuthUsers{}, Sessions: &memSessions{}, SessionTTL: time.Hour},
+		Store:     env.store,
+		JWTSecret: testJWTSecret,
+		Providers: func(name string, s cloudacct.Secrets) (provider.Provider, error) { return bp, nil },
+		Tokens:    env.tokens,
+	})
+	// 新的 mux 有自己的用户和会话，重新 setup。
+	req := httptest.NewRequest(http.MethodPost, "/api/setup", strings.NewReader(`{"username":"me","password":"password1","confirm":"password1"}`))
+	w := httptest.NewRecorder()
+	env.h.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("setup %d %s", w.Code, w.Body.String())
+	}
+	env.cookie = w.Result().Cookies()[0]
+
+	env.saveWebDAV(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := env.do(http.MethodPost, "/api/tasks", `{"name":"docs","localDir":"`+dir+`","provider":"webdav","remoteDir":"/bak"}`)
+	if rec.Code != 200 {
+		t.Fatalf("create %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = env.do(http.MethodPost, "/api/tasks/1/run", "")
+	if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), `"running"`) {
+		t.Fatalf("run %d %s", rec.Code, rec.Body.String())
+	}
+	var v struct {
+		ID uint `json:"id"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &v)
+	if v.ID == 0 {
+		t.Fatalf("no id: %s", rec.Body.String())
+	}
+	select {
+	case <-bp.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("walk never started")
+	}
+	// 备份进行中：状态仍为 running，再次运行返回 409（锁和 running 记录都在）。
+	if got := env.waitRunOnce(t, v.ID); got["status"] != "running" {
+		t.Fatalf("expected running, got %v", got)
+	}
+	if rec = env.do(http.MethodPost, "/api/tasks/1/run", ""); rec.Code != http.StatusConflict {
+		t.Fatalf("second run %d", rec.Code)
+	}
+	release()
+	if final := env.waitRun(t, v.ID); final["status"] != "success" {
+		t.Fatalf("final %v", final)
+	}
+}
+
+func (e *apiEnv) waitRunOnce(t *testing.T, id uint) map[string]any {
+	t.Helper()
+	rec := e.do(http.MethodGet, "/api/runs/"+strconv.Itoa(int(id)), "")
+	var v map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
+		t.Fatal(err)
+	}
+	return v
 }

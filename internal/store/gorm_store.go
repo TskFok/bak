@@ -95,6 +95,36 @@ func (s *GormStore) FinishRun(ctx context.Context, run backup.Run) error {
 	}).Error
 }
 
+// UpdateRunProgress 只在运行仍为 running 时更新计数，不写 finished_at。
+func (s *GormStore) UpdateRunProgress(ctx context.Context, run backup.Run) error {
+	return s.db.WithContext(ctx).Model(&backupRun{}).Where("id = ? AND status = ?", run.ID, "running").Updates(map[string]interface{}{
+		"success_count": run.SuccessCount,
+		"skip_count":    run.SkipCount,
+		"fail_count":    run.FailCount,
+		"updated_at":    localNow(),
+	}).Error
+}
+
+// ListFileResults 按 id 升序返回某次运行的逐文件结果。
+func (s *GormStore) ListFileResults(ctx context.Context, runID uint) ([]backup.FileResult, error) {
+	var rows []backupFileResult
+	if err := s.db.WithContext(ctx).Where("run_id = ?", runID).Order("id ASC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]backup.FileResult, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, backup.FileResult{
+			RelativePath:      r.RelativePath,
+			Status:            r.Status,
+			Error:             r.Error,
+			SourceFingerprint: r.SourceFingerprint,
+			Size:              r.Size,
+			ModTime:           r.ModTime,
+		})
+	}
+	return out, nil
+}
+
 func (s *GormStore) LatestSuccess(ctx context.Context, taskID uint, rel, fingerprint string) (backup.FileResult, bool, error) {
 	var rows []backupFileResult
 	err := s.db.WithContext(ctx).

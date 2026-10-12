@@ -59,6 +59,7 @@ type APIStore interface {
 	DeleteTask(ctx context.Context, id uint) error
 	GetRun(ctx context.Context, id uint) (backup.Run, error)
 	ListRuns(ctx context.Context, limit int) ([]backup.Run, error)
+	ListFileResults(ctx context.Context, runID uint) ([]backup.FileResult, error)
 }
 
 var _ APIStore = (*store.GormStore)(nil)
@@ -750,7 +751,13 @@ func (a *api) runTask(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, backup.ErrBusy.Error(), http.StatusConflict)
 		return
 	}
-	defer a.unlock(id)
+	// 锁在 goroutine 接手之前由这里释放；接手后由 goroutine 在备份结束时释放。
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			a.unlock(id)
+		}
+	}()
 
 	// 备份可能持续很久，不跟随请求取消。
 	ctx := context.Background()
@@ -778,7 +785,7 @@ func (a *api) runTask(w http.ResponseWriter, req *http.Request) {
 		a.failRun(ctx, w, task, "无法连接网盘")
 		return
 	}
-	run, err := backup.RunTask(ctx, a.deps.Store, task, p, "manual", a.deps.Now())
+	run, err := backup.StartRun(ctx, a.deps.Store, task, "manual", a.deps.Now())
 	if errors.Is(err, backup.ErrBusy) {
 		http.Error(w, backup.ErrBusy.Error(), http.StatusConflict)
 		return
@@ -787,7 +794,15 @@ func (a *api) runTask(w http.ResponseWriter, req *http.Request) {
 		serverError(w)
 		return
 	}
-	writeJSON(w, http.StatusOK, runView(run))
+	view := runView(run)
+	handedOff = true
+	go func() {
+		defer a.unlock(id)
+		if _, err := backup.Execute(ctx, a.deps.Store, task, p, run); err != nil {
+			log.Printf("手动备份收尾失败 task=%d run=%d: %v", task.ID, run.ID, err)
+		}
+	}()
+	writeJSON(w, http.StatusAccepted, view)
 }
 
 // failRun 把无法开始的手动运行记为 failed，响应仍是 200。
@@ -918,7 +933,22 @@ func (a *api) getRun(w http.ResponseWriter, req *http.Request) {
 		serverError(w)
 		return
 	}
-	writeJSON(w, http.StatusOK, runView(run))
+	view := runView(run)
+	files, err := a.deps.Store.ListFileResults(req.Context(), id)
+	if err != nil {
+		serverError(w)
+		return
+	}
+	list := make([]map[string]any, 0, len(files))
+	for _, f := range files {
+		list = append(list, map[string]any{
+			"relativePath": f.RelativePath,
+			"status":       f.Status,
+			"error":        f.Error,
+		})
+	}
+	view["files"] = list
+	writeJSON(w, http.StatusOK, view)
 }
 
 // ---- 默认实现 ----

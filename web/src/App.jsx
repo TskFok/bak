@@ -659,6 +659,12 @@ function TaskRow({ task, clouds, onChanged }) {
   const runNow = () =>
     act("run", async () => {
       const run = await request(`/api/tasks/${task.id}/run`, { method: "POST" });
+      if (run.status === "running") {
+        // 后端已接手，备份在后台继续；跳到运行详情，由那里轮询进度。
+        if (alive.current) setMsg({ kind: "ok", text: "已开始备份" });
+        window.location.hash = `#/runs/${run.id}`;
+        return;
+      }
       const text = `备份${RUN_STATUS[run.status]?.text || run.status}：成功 ${run.successCount}，跳过 ${run.skipCount}，失败 ${run.failCount}`;
       if (alive.current) setMsg({ kind: run.status === "failed" ? "error" : "ok", text: run.errorSummary ? `${text}（${run.errorSummary}）` : text });
       await onChanged();
@@ -799,6 +805,36 @@ function RunsPage() {
   );
 }
 
+// 逐文件结果：状态一律用文字，失败时显示原因。
+function FileTable({ files }) {
+  if (!files.length) return <p className="empty">暂无文件记录。</p>;
+  return (
+    <div className="table-wrap">
+      <table>
+        <caption className="sr-only">文件结果</caption>
+        <thead>
+          <tr>
+            <th scope="col">文件</th>
+            <th scope="col">结果</th>
+            <th scope="col">错误</th>
+          </tr>
+        </thead>
+        <tbody>
+          {files.map((f, i) => (
+            <tr key={`${i}-${f.relativePath}`}>
+              <td className="cell-wrap">{f.relativePath}</td>
+              <td>
+                <StatusBadge status={f.status} />
+              </td>
+              <td className="cell-wrap">{f.status === "failed" ? f.error || "未知错误" : ""}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function RunDetailPage({ id }) {
   const run = useLoad(() => request(`/api/runs/${id}`), String(id));
   const tasks = useLoad(() => request("/api/tasks"));
@@ -861,6 +897,12 @@ function RunDetailPage({ id }) {
               <span>{r.errorSummary}</span>
             </p>
           )}
+        </section>
+      )}
+      {r && (
+        <section aria-labelledby="run-files-title">
+          <h2 id="run-files-title">文件结果</h2>
+          <FileTable files={r.files || []} />
         </section>
       )}
     </>

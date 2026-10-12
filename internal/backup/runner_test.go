@@ -9,9 +9,12 @@ import (
 	"time"
 )
 
-type fakeProvider struct{ uploads []string; fail string }
+type fakeProvider struct {
+	uploads []string
+	fail    string
+}
 
-func (f *fakeProvider) Test(ctx context.Context) error { return nil }
+func (f *fakeProvider) Test(ctx context.Context) error                        { return nil }
 func (f *fakeProvider) EnsureDir(ctx context.Context, remoteDir string) error { return nil }
 func (f *fakeProvider) Upload(ctx context.Context, localPath, remotePath string) error {
 	if filepath.Base(localPath) == f.fail {
@@ -22,10 +25,12 @@ func (f *fakeProvider) Upload(ctx context.Context, localPath, remotePath string)
 }
 
 type memStore struct {
-	running bool
-	runs    []Run
-	files   []FileResult
-	marked  int
+	running     bool
+	runs        []Run
+	files       []FileResult
+	marked      int
+	progress    []Run
+	progressErr error
 }
 
 func (m *memStore) HasRunning(ctx context.Context, taskID uint) (bool, error) { return m.running, nil }
@@ -39,6 +44,10 @@ func (m *memStore) FinishRun(ctx context.Context, run Run) error {
 	m.running = false
 	m.runs[len(m.runs)-1] = run
 	return nil
+}
+func (m *memStore) UpdateRunProgress(ctx context.Context, run Run) error {
+	m.progress = append(m.progress, run)
+	return m.progressErr
 }
 func (m *memStore) LatestSuccess(ctx context.Context, taskID uint, rel, fingerprint string) (FileResult, bool, error) {
 	for i := len(m.files) - 1; i >= 0; i-- {
@@ -170,5 +179,83 @@ func assertFinishedAt(t *testing.T, run Run, startedAt time.Time) {
 	}
 	if run.FinishedAt.Equal(startedAt) {
 		t.Fatalf("FinishedAt should not equal injected start time")
+	}
+}
+
+func writeFiles(t *testing.T, dir string, names ...string) {
+	t.Helper()
+	for _, n := range names {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestExecuteDoesNotRecheckBusy(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, "a.txt")
+	store := &memStore{}
+	task := Task{ID: 1, LocalDir: dir, RemoteDir: "/bak"}
+	run, err := StartRun(context.Background(), store, task, "manual", time.Now())
+	if err != nil || run.ID == 0 || run.Status != "running" {
+		t.Fatalf("%+v %v", run, err)
+	}
+	if !store.running {
+		t.Fatal("running row should exist after StartRun")
+	}
+	done, err := Execute(context.Background(), store, task, &fakeProvider{}, run)
+	if err != nil {
+		t.Fatalf("Execute must not see its own running row: %v", err)
+	}
+	if done.ID != run.ID || done.Status != "success" || done.SuccessCount != 1 || done.FinishedAt == nil {
+		t.Fatalf("%+v", done)
+	}
+}
+
+func TestStartRunBusy(t *testing.T) {
+	store := &memStore{running: true}
+	if _, err := StartRun(context.Background(), store, Task{ID: 1}, "manual", time.Now()); !errors.Is(err, ErrBusy) {
+		t.Fatalf("got %v", err)
+	}
+	if len(store.runs) != 0 {
+		t.Fatal("no run row when busy")
+	}
+}
+
+func TestProgressSavedAfterEachFile(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, "a.txt", "b.txt", "c.txt")
+	store := &memStore{}
+	run, err := RunTask(context.Background(), store, Task{ID: 1, LocalDir: dir, RemoteDir: "/bak"}, &fakeProvider{fail: "b.txt"}, "manual", time.Now())
+	if err != nil || run.Status != "partial" {
+		t.Fatalf("%+v %v", run, err)
+	}
+	if len(store.progress) != 3 {
+		t.Fatalf("progress calls %d", len(store.progress))
+	}
+	for i, pr := range store.progress {
+		if pr.ID != run.ID || pr.Status != "running" || pr.FinishedAt != nil {
+			t.Fatalf("progress %d %+v", i, pr)
+		}
+		if pr.SuccessCount+pr.SkipCount+pr.FailCount != i+1 {
+			t.Fatalf("progress %d counts %+v", i, pr)
+		}
+	}
+	last := store.progress[2]
+	if last.SuccessCount != 2 || last.FailCount != 1 {
+		t.Fatalf("%+v", last)
+	}
+}
+
+func TestProgressErrorDoesNotAbortWalk(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, "a.txt", "b.txt")
+	store := &memStore{progressErr: errors.New("db busy")}
+	run, err := RunTask(context.Background(), store, Task{ID: 1, LocalDir: dir, RemoteDir: "/bak"}, &fakeProvider{}, "manual", time.Now())
+	if err != nil || run.Status != "success" || run.SuccessCount != 2 {
+		t.Fatalf("%+v %v", run, err)
+	}
+	if len(store.files) != 2 {
+		t.Fatalf("files %d", len(store.files))
 	}
 }

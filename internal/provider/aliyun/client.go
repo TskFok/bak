@@ -190,6 +190,61 @@ func (c *Client) findFolder(ctx context.Context, driveID, parentID, name string,
 	}
 }
 
+// findByName 列出 parent 下所有同名子项（文件或目录）。
+func (c *Client) findByName(ctx context.Context, driveID, parentID, name string, failErr error) ([]fileItem, error) {
+	var found []fileItem
+	marker := ""
+	for {
+		req := map[string]any{
+			"drive_id":       driveID,
+			"parent_file_id": parentID,
+			"limit":          100,
+		}
+		if marker != "" {
+			req["marker"] = marker
+		}
+		var out struct {
+			Items      []fileItem `json:"items"`
+			NextMarker string     `json:"next_marker"`
+		}
+		if err := c.post(ctx, "/adrive/v1.0/openFile/list", req, &out, failErr); err != nil {
+			return nil, err
+		}
+		for _, it := range out.Items {
+			if it.Name == name {
+				found = append(found, it)
+			}
+		}
+		if out.NextMarker == "" {
+			return found, nil
+		}
+		marker = out.NextMarker
+	}
+}
+
+// replaceExisting 删除 parent 下同名的旧文件，使随后的 create 能用 refuse 模式。
+// 同名目录不会被删除，直接失败。
+func (c *Client) replaceExisting(ctx context.Context, driveID, parentID, name string) error {
+	same, err := c.findByName(ctx, driveID, parentID, name, errUpload)
+	if err != nil {
+		return err
+	}
+	for _, it := range same {
+		if it.Type != "file" {
+			return errUpload
+		}
+	}
+	for _, it := range same {
+		if err := c.post(ctx, "/adrive/v1.0/openFile/delete", map[string]any{
+			"drive_id": driveID,
+			"file_id":  it.FileID,
+		}, nil, errUpload); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ensurePath 从 root 起逐段确认目录存在，返回叶子目录的 file_id。
 func (c *Client) ensurePath(ctx context.Context, remoteDir string, failErr error) (string, error) {
 	driveID, err := c.getDriveID(ctx, failErr)
@@ -255,6 +310,9 @@ func (c *Client) Upload(ctx context.Context, localPath, remotePath string) error
 	if err != nil {
 		return err
 	}
+	if err := c.replaceExisting(ctx, driveID, parentID, name); err != nil {
+		return err
+	}
 	var created struct {
 		FileID       string `json:"file_id"`
 		UploadID     string `json:"upload_id"`
@@ -267,7 +325,7 @@ func (c *Client) Upload(ctx context.Context, localPath, remotePath string) error
 		"parent_file_id":  parentID,
 		"name":            name,
 		"type":            "file",
-		"check_name_mode": "auto_rename",
+		"check_name_mode": "refuse",
 		"size":            info.Size(),
 		"part_info_list":  []map[string]any{{"part_number": 1}},
 	}, &created, errUpload)

@@ -166,6 +166,23 @@ func (s *GormStore) CreateTask(ctx context.Context, task *backup.Task) error {
 	return nil
 }
 
+// UpdateTask 更新任务的可编辑字段，保留 last_scheduled_on；任务不存在时返回 gorm.ErrRecordNotFound。
+func (s *GormStore) UpdateTask(ctx context.Context, task *backup.Task) error {
+	var row backupTask
+	if err := s.db.WithContext(ctx).First(&row, task.ID).Error; err != nil {
+		return err
+	}
+	return s.db.WithContext(ctx).Model(&row).Updates(map[string]interface{}{
+		"name":             task.Name,
+		"local_dir":        task.LocalDir,
+		"cloud_account_id": task.CloudAccountID,
+		"remote_dir":       task.RemoteDir,
+		"schedule_time":    task.ScheduleTime,
+		"enabled":          task.Enabled,
+		"updated_at":       localNow(),
+	}).Error
+}
+
 // DeleteTask 只删除任务行，运行记录和文件结果保留。
 func (s *GormStore) DeleteTask(ctx context.Context, id uint) error {
 	return s.db.WithContext(ctx).Delete(&backupTask{}, id).Error

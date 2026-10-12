@@ -154,3 +154,31 @@ func TestUpsertCloud(t *testing.T) {
 		t.Fatalf("%+v %v", got, err)
 	}
 }
+
+func TestUpdateTask(t *testing.T) {
+	s := newTestStore(t, "update_task")
+	ctx := context.Background()
+	day := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	task := backup.Task{Name: "a", LocalDir: "/tmp", RemoteDir: "/bak", ScheduleTime: "09:00", Enabled: true, CloudAccountID: 1, LastScheduledOn: &day}
+	if err := s.CreateTask(ctx, &task); err != nil {
+		t.Fatal(err)
+	}
+	upd := backup.Task{ID: task.ID, Name: "b", LocalDir: "/var", RemoteDir: "/bak2", ScheduleTime: "10:30", Enabled: false, CloudAccountID: 2}
+	if err := s.UpdateTask(ctx, &upd); err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := s.ListTasks(ctx)
+	if err != nil || len(tasks) != 1 {
+		t.Fatalf("%v %v", tasks, err)
+	}
+	got := tasks[0]
+	if got.Name != "b" || got.LocalDir != "/var" || got.RemoteDir != "/bak2" || got.ScheduleTime != "10:30" || got.Enabled || got.CloudAccountID != 2 {
+		t.Fatalf("not updated: %+v", got)
+	}
+	if got.LastScheduledOn == nil {
+		t.Fatal("LastScheduledOn was cleared")
+	}
+	if err := s.UpdateTask(ctx, &backup.Task{ID: 999}); err == nil {
+		t.Fatal("expected not found")
+	}
+}

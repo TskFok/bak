@@ -117,3 +117,58 @@ func TestMissingDir(t *testing.T) {
 		t.Fatalf("%+v %v", run, err)
 	}
 }
+
+func TestUnreadableRootDir(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(dir, 0o700) }()
+	if _, err := os.ReadDir(dir); err == nil {
+		t.Skip("chmod 000 did not prevent listing on this platform")
+	}
+	start := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	store := &memStore{}
+	run, err := RunTask(context.Background(), store, Task{ID: 1, LocalDir: dir, RemoteDir: "/bak"}, &fakeProvider{}, "manual", start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != "failed" || run.ErrorSummary != "本地目录不存在或不可读" {
+		t.Fatalf("%+v", run)
+	}
+	assertFinishedAt(t, run, start)
+}
+
+func TestFinishedAtRecorded(t *testing.T) {
+	start := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "ok.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := &memStore{}
+	run, err := RunTask(context.Background(), store, Task{ID: 1, LocalDir: dir, RemoteDir: "/bak"}, &fakeProvider{}, "manual", start)
+	if err != nil || run.Status != "success" {
+		t.Fatalf("%+v %v", run, err)
+	}
+	assertFinishedAt(t, run, start)
+
+	store = &memStore{}
+	run, err = RunTask(context.Background(), store, Task{ID: 1, LocalDir: filepath.Join(t.TempDir(), "nope"), RemoteDir: "/bak"}, &fakeProvider{}, "manual", start)
+	if err != nil || run.Status != "failed" {
+		t.Fatalf("%+v %v", run, err)
+	}
+	assertFinishedAt(t, run, start)
+}
+
+func assertFinishedAt(t *testing.T, run Run, startedAt time.Time) {
+	t.Helper()
+	if run.FinishedAt == nil || run.FinishedAt.IsZero() {
+		t.Fatalf("FinishedAt unset: %+v", run)
+	}
+	if !run.StartedAt.Equal(startedAt) {
+		t.Fatalf("StartedAt=%v want %v", run.StartedAt, startedAt)
+	}
+	if run.FinishedAt.Equal(startedAt) {
+		t.Fatalf("FinishedAt should not equal injected start time")
+	}
+}

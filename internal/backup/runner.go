@@ -15,7 +15,10 @@ import (
 	"BaiduYunPanBak/internal/provider"
 )
 
-var ErrBusy = errors.New("该任务正在备份")
+var (
+	ErrBusy              = errors.New("该任务正在备份")
+	errRootDirUnreadable = errors.New("root dir unreadable")
+)
 
 type Task struct {
 	ID               uint
@@ -87,11 +90,11 @@ func RunTask(ctx context.Context, store Store, task Task, p provider.Provider, t
 	}
 	info, err := os.Stat(task.LocalDir)
 	if err != nil || !info.IsDir() {
-		return finishFailed(ctx, store, *run, now, "本地目录不存在或不可读")
+		return finishFailed(ctx, store, *run, "本地目录不存在或不可读")
 	}
 	fp := Fingerprint(task.LocalDir, task.CloudAccountID, task.RemoteDir)
 	if err := p.EnsureDir(ctx, task.RemoteDir); err != nil {
-		return finishFailed(ctx, store, *run, now, "无法准备网盘目录")
+		return finishFailed(ctx, store, *run, "无法准备网盘目录")
 	}
 	err = filepath.WalkDir(task.LocalDir, func(local string, d fs.DirEntry, walkErr error) error {
 		rel, relErr := filepath.Rel(task.LocalDir, local)
@@ -99,6 +102,9 @@ func RunTask(ctx context.Context, store Store, task Task, p provider.Provider, t
 			return nil
 		}
 		if rel == "." {
+			if walkErr != nil {
+				return errRootDirUnreadable
+			}
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
@@ -133,9 +139,12 @@ func RunTask(ctx context.Context, store Store, task Task, p provider.Provider, t
 		return nil
 	})
 	if err != nil {
-		return finishFailed(ctx, store, *run, now, "扫描失败")
+		if errors.Is(err, errRootDirUnreadable) {
+			return finishFailed(ctx, store, *run, "本地目录不存在或不可读")
+		}
+		return finishFailed(ctx, store, *run, "扫描失败")
 	}
-	done := now
+	done := time.Now()
 	run.FinishedAt = &done
 	run.Status = FinalStatus(run.SuccessCount, run.SkipCount, run.FailCount)
 	if err := store.FinishRun(ctx, *run); err != nil {
@@ -144,8 +153,8 @@ func RunTask(ctx context.Context, store Store, task Task, p provider.Provider, t
 	return *run, nil
 }
 
-func finishFailed(ctx context.Context, store Store, run Run, now time.Time, summary string) (Run, error) {
-	done := now
+func finishFailed(ctx context.Context, store Store, run Run, summary string) (Run, error) {
+	done := time.Now()
 	run.FinishedAt = &done
 	run.Status = "failed"
 	run.ErrorSummary = summary

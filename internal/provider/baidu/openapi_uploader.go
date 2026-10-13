@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
 	"net/url"
 	"os"
 	"strconv"
@@ -17,12 +18,19 @@ import (
 const partRetries = 3
 
 // OpenAPIUploader 通过现有 tool/openapi 客户端调用百度开放接口。
-type OpenAPIUploader struct{}
+type OpenAPIUploader struct {
+	// httpClient 供测试替换。为空时使用默认客户端。
+	httpClient *http.Client
+}
 
 func NewOpenAPIUploader() *OpenAPIUploader { return &OpenAPIUploader{} }
 
-func (OpenAPIUploader) api() *openapi.APIClient {
-	return openapi.NewAPIClient(openapi.NewConfiguration())
+func (u OpenAPIUploader) api() *openapi.APIClient {
+	cfg := openapi.NewConfiguration()
+	if u.httpClient != nil {
+		cfg.HTTPClient = u.httpClient
+	}
+	return openapi.NewAPIClient(cfg)
 }
 
 // toInt32 生成的 SDK 的 size 参数为 int32，超出时明确报错而不是溢出。

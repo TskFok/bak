@@ -29,6 +29,23 @@ func TestMakeDockerBuildLinuxArm64(t *testing.T) {
 	}
 }
 
+func TestMakeBuildTargetsDoNotRewriteGoEnv(t *testing.T) {
+	linuxOut := dryRunMake(t, "build-linux")
+	mustContain(t, linuxOut, "GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build")
+	macOut := dryRunMake(t, "build-mac")
+	mustContain(t, macOut, "GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build")
+	runOut := dryRunMake(t, "run-mac")
+	mustContain(t, runOut, "go run main.go")
+	for _, out := range []string{linuxOut, macOut, runOut} {
+		if strings.Contains(out, "go env") {
+			t.Fatalf("构建命令改写了全局 Go 环境:\n%s", out)
+		}
+	}
+	if strings.Contains(macOut, "GOOS=linux") {
+		t.Fatalf("mac 构建使用了 linux:\n%s", macOut)
+	}
+}
+
 func TestMakeDockerImageOverride(t *testing.T) {
 	cmd := exec.Command("make", "-n", "IMAGE=registry.example.com/bak", "docker-build-linux-amd64")
 	out, err := cmd.CombinedOutput()
@@ -66,7 +83,7 @@ func TestDockerComposeExample(t *testing.T) {
 		t.Fatalf("compose 仍使用 network_mode:\n%s", text)
 	}
 	mustContain(t, text, `127.0.0.1:${BAIDUBAK_PORT:-8080}:8080`)
-	mustContain(t, text, `command: ["serve", "--addr", "0.0.0.0:8080"]`)
+	mustContain(t, text, `command: ["--addr", "0.0.0.0:8080"]`)
 	mustContain(t, text, `BAIDUBAK_ALLOW_UNSPECIFIED_ADDR: "1"`)
 	mustContain(t, text, "host.docker.internal:host-gateway")
 	mustContain(t, text, "BAIDUBAK_PORT")

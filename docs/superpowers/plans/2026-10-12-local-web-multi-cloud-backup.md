@@ -2,15 +2,15 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在现有 Go 命令行程序上增加只监听本机的 Web 面板，用一个本地账号登录后，把本地目录单向备份到百度网盘、阿里云盘或 WebDAV，并支持立即备份和每天定时。
+**Goal:** 提供只监听本机的 Web 面板，用一个本地账号登录后，把本地目录单向备份到百度网盘、阿里云盘或 WebDAV，并支持立即备份和每天定时。直接运行程序启动面板。不要新增 `upload`、`flashToken`、`reflashToken` 或 `serve` 子命令。
 
-**Architecture:** 同一个 Go 进程提供 chi HTTP 服务和 30 秒定时器。网盘收成 `Provider` 接口；备份运行器依赖该接口和存储接口，测试使用内存实现。React 页面构建后由 `go:embed` 提供。百度分片上传从 `cmd/upload.go` 挪到百度适配器。
+**Architecture:** 同一个 Go 进程提供 chi HTTP 服务和 30 秒定时器。网盘收成 `Provider` 接口；备份运行器依赖该接口和存储接口，测试使用内存实现。React 页面构建后由 `go:embed` 提供。百度分片上传在百度适配器中完成，不从命令行接收路径。
 
 **Tech Stack:** Go 1.20、chi v5、GORM、MySQL、Redis、bcrypt、AES-GCM、React 18、Vite。
 
 ## Global Constraints
 
-- 默认监听 `127.0.0.1:8080`；`--addr` 只接受回环地址（`127.0.0.1`、`::1`、`localhost`），否则 `serve` 拒绝启动。
+- 默认监听 `127.0.0.1:8080`；`--addr` 只接受回环地址（`127.0.0.1`、`::1`、`localhost`），否则进程拒绝启动。位置参数使进程以状态码 2 退出。
 - `--dev` 把非 `/api` 请求代理到 `http://127.0.0.1:5173`。未加 `--dev` 时用 `go:embed` 提供 `web/dist`。
 - 路由使用 chi。保持 Go 1.20。不引入 Gin。
 - 继续使用现有 MySQL、Redis 和 `utils/conf/conf.yaml`。
@@ -28,7 +28,7 @@
 - 令牌在 5 分钟内到期时先刷新。刷新失败则整次 `failed`。`EnsureDir` 失败也是整次 `failed`。单文件失败继续。
 - 同一任务已有 `running` 时，手动运行返回 409，定时本轮跳过且不更新 `last_scheduled_on`。
 - 定时器每 30 秒检查。手动运行不修改 `last_scheduled_on`。
-- `serve` 启动时把遗留 `running` 改为 `failed`，`error_summary` 为 `进程已退出`。
+- 进程启动时把遗留 `running` 改为 `failed`，`error_summary` 为 `进程已退出`。
 - 删除任务保留运行记录和文件结果。
 - 除 `POST /api/setup`、`GET /api/setup/status`、`POST /api/login` 和静态页面外，无会话的 `/api` 返回 401。
 - 概览和运行详情每 3 秒刷新进行中的记录。
@@ -1706,7 +1706,6 @@ git commit -m "feat: persist users, clouds, tasks, and backup runs"
 **Files:**
 - Create: `internal/provider/baidu/upload.go`
 - Test: `internal/provider/baidu/upload_test.go`
-- Modify: `cmd/upload.go`
 
 **Interfaces:**
 - Consumes: `provider.Provider`
@@ -1836,7 +1835,7 @@ func (c *Client) Upload(ctx context.Context, localPath, remotePath string) error
 
 `Test` 在 `c.token == ""` 时返回 `fmt.Errorf("未连接")`。`EnsureDir` 调用 `c.up.Mkdir`。`New` 保存 token、uploader、chunkDir、chunkSize。
 
-`cmd/upload.go` 只接收本地文件绝对路径。远程路径为 `/bak/` + `time.Now().Format("2006-01-02")` + `/` + 文件名。access token 先读 `cache.Get("access_token")`，为空再读 `model.Token.Find()`。分片目录固定为 `runtime/chunks`。真实上传器在 `internal/provider/baidu/openapi_uploader.go`，调用现有 `tool/openapi` 的 `Xpanfileprecreate`、`Pcssuperfile2`、`Xpanfilecreate`。创建目录时 `Isdir(1)`。
+不要创建 `cmd/upload.go`。分片目录固定为 `runtime/chunks`，由面板里的备份任务传入远程路径。真实上传器在 `internal/provider/baidu/openapi_uploader.go`，调用现有 `tool/openapi` 的 `Xpanfileprecreate`、`Pcssuperfile2`、`Xpanfilecreate`。创建目录时 `Isdir(1)`。
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1846,7 +1845,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add internal/provider/baidu cmd/upload.go
+git add internal/provider/baidu
 git commit -m "feat: move Baidu chunk upload behind the provider interface"
 ```
 
@@ -1958,7 +1957,7 @@ git commit -m "feat: expose cloud, task, and run APIs"
 
 ---
 
-### Task 12: serve 命令
+### Task 12: 启动面板
 
 **Files:**
 - Create: `cmd/serve.go`
@@ -1968,7 +1967,7 @@ git commit -m "feat: expose cloud, task, and run APIs"
 
 **Interfaces:**
 - Consumes: `server.NewMux`、`server.ValidateAddr`、`backup.Tick`、`store.NewGorm`、`store.RedisSessions`
-- Produces: `serve [--addr 127.0.0.1:8080] [--dev]`
+- Produces: 直接运行程序，可选 `--addr`（默认 `127.0.0.1:8080`）和 `--dev`。不注册子命令。
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1996,9 +1995,10 @@ var distFS embed.FS
 
 `--dev` 时对非 `/api` 使用 `httputil.NewSingleHostReverseProxy` 指向 `http://127.0.0.1:5173`。
 
-`cmd/serve.go`：
+`cmd/serve.go` 用标准库 `flag` 解析参数，不要引入 cobra：
 
 - 默认 addr `127.0.0.1:8080`
+- 出现位置参数时向 stderr 说明不接受子命令，并以状态码 2 退出
 - `ValidateAddr` 失败则 `os.Exit(1)`
 - `store.NewGorm(global.DataBase).FailStaleRuns`
 - 会话 TTL 为 `time.Duration(global.JwtExpire) * time.Hour`
@@ -2085,13 +2085,12 @@ Expected: PASS。现有包没有测试时也必须通过编译。
 README 说明：
 
 ```text
-go run main.go serve
+go run .
 浏览器打开 http://127.0.0.1:8080
 首次打开设置本地账号
-go run main.go upload 文件绝对路径
 ```
 
-开发时另开 `cd web && npm run dev`，Go 使用 `go run main.go serve --dev`。
+开发时另开 `cd web && npm run dev`，Go 使用 `go run . --dev`。README 不记录 `upload`、`flashToken`、`reflashToken` 或 `serve` 子命令。
 
 ```bash
 git add web internal/server/dist README.md
@@ -2100,11 +2099,9 @@ git commit -m "feat: add the local backup panel UI"
 
 ---
 
-### Task 14: 命令行与面板共用百度令牌
+### Task 14: 面板写入百度令牌
 
 **Files:**
-- Modify: `cmd/flash_token.go`
-- Modify: `cmd/reflash_token.go`
 - Create: `internal/baidutoken/save.go`
 - Test: `internal/baidutoken/save_test.go`
 
@@ -2124,7 +2121,7 @@ Expected: FAIL
 
 - [ ] **Step 3: Write minimal implementation**
 
-`flashToken` 和 `reflashToken` 在拿到开放平台响应后调用 `baidutoken.Save`。面板 `authorize` 也调用它。`upload` 仍先读 Redis `access_token`，没有再读 `model.Token`。
+面板授权和刷新在拿到开放平台响应后调用 `baidutoken.Save`，写入 `tokens` 表和 Redis。不要恢复 `cmd/flash_token.go`、`cmd/reflash_token.go` 或 `cmd/upload.go`。
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -2134,6 +2131,6 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add internal/baidutoken cmd/flash_token.go cmd/reflash_token.go internal/server
-git commit -m "feat: share Baidu tokens between the CLI and the panel"
+git add internal/baidutoken internal/server
+git commit -m "feat: persist Baidu tokens from the panel"
 ```

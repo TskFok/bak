@@ -30,4 +30,4 @@ WORKDIR /app
 COPY --from=build /out/bak /app/bak
 EXPOSE 8080
 ENTRYPOINT ["/app/bak"]
-CMD ["serve", "--addr", "127.0.0.1:8080"]
+CMD ["--addr", "127.0.0.1:8080"]

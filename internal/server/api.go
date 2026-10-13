@@ -1084,7 +1084,7 @@ func (liveTokens) Refresh(ctx context.Context, name string, s cloudacct.Secrets)
 	return s, errors.New("不支持的网盘")
 }
 
-// saveBaiduToken 交给 baidutoken.Save 写 tokens 表和 Redis，让 upload 命令继续可用。
+// saveBaiduToken 交给 baidutoken.Save 写 tokens 表和 Redis，让面板账号和令牌表保持对齐。
 // 面板自己保存密文账号，所以这里不传 accountSaver；失败只记日志，不影响授权结果。
 func saveBaiduToken(access, refresh string, expiresIn int) {
 	if err := baidutoken.Save(access, refresh, expiresIn, nil); err != nil {

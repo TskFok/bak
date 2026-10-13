@@ -845,6 +845,12 @@ function TaskForm({ clouds, task, onSaved, onCancel }) {
   const encId = useId();
   const clearId = useId();
   const titleId = editing ? `edit-task-${task.id}` : "task-form-title";
+  const bodyRef = useRef(null);
+
+  useEffect(() => {
+    const alert = bodyRef.current?.querySelector("[role='alert']");
+    alert?.scrollIntoView({ block: "nearest" });
+  }, [fields]);
 
   async function submit(e) {
     e.preventDefault();
@@ -891,145 +897,151 @@ function TaskForm({ clouds, task, onSaved, onCancel }) {
         if (!busy) onCancel?.();
       }}
     >
-      <form onSubmit={submit} noValidate aria-labelledby={titleId}>
-        <h2 id={titleId}>{editing ? "编辑任务" : "新建备份任务"}</h2>
-        <TextField label="任务名称" value={form.name} onChange={set("name")} error={fields.name} hint="留空则使用本地目录名" autoComplete="off" />
-        <div className="field">
-          <label htmlFor={dirId}>本地目录</label>
-          <div className="field-with-action">
-            <input
-              id={dirId}
-              type="text"
-              value={form.localDir}
-              placeholder="/Users/me/Documents"
-              autoComplete="off"
-              aria-invalid={fields.localDir ? "true" : undefined}
-              aria-describedby={fields.localDir ? `${dirId}-err` : `${dirId}-hint`}
-              onChange={(e) => set("localDir")(e.target.value)}
+      <form className="dialog-sheet" onSubmit={submit} noValidate aria-labelledby={titleId}>
+        <h2 className="dialog-sheet-head" id={titleId}>
+          {editing ? "编辑任务" : "新建备份任务"}
+        </h2>
+        <div className="dialog-sheet-body" ref={bodyRef}>
+          <TextField label="任务名称" value={form.name} onChange={set("name")} error={fields.name} hint="留空则使用本地目录名" autoComplete="off" />
+          <div className="field">
+            <label htmlFor={dirId}>本地目录</label>
+            <div className="field-with-action">
+              <input
+                id={dirId}
+                type="text"
+                value={form.localDir}
+                placeholder="/Users/me/Documents"
+                autoComplete="off"
+                aria-invalid={fields.localDir ? "true" : undefined}
+                aria-describedby={fields.localDir ? `${dirId}-err` : `${dirId}-hint`}
+                onChange={(e) => set("localDir")(e.target.value)}
+              />
+              <button className="btn" type="button" onClick={() => setPicking(true)} disabled={busy}>
+                <Icon name="folder" size={18} />
+                选择目录
+              </button>
+            </div>
+            <p className="field-hint" id={`${dirId}-hint`}>
+              从本机文件夹中选择，也可以直接粘贴路径。
+            </p>
+            {fields.localDir && (
+              <p className="field-error" id={`${dirId}-err`} role="alert">
+                {fields.localDir}
+              </p>
+            )}
+          </div>
+          {picking && (
+            <DirPicker
+              initialPath={form.localDir}
+              onSelect={(dir) => {
+                set("localDir")(dir);
+                setFields((current) => {
+                  const next = { ...current };
+                  delete next.localDir;
+                  return next;
+                });
+                setPicking(false);
+              }}
+              onCancel={() => setPicking(false)}
             />
-            <button className="btn" type="button" onClick={() => setPicking(true)} disabled={busy}>
-              <Icon name="folder" size={18} />
-              选择目录
+          )}
+          <div className="field">
+            <label htmlFor={selectId}>网盘</label>
+            <select id={selectId} value={form.provider} onChange={(e) => set("provider")(e.target.value)} aria-invalid={fields.provider ? "true" : undefined}>
+              <option value="">请选择网盘</option>
+              {clouds.map((c) => (
+                <option key={c.provider} value={c.provider} disabled={c.id === 0}>
+                  {c.displayName || PROVIDER_NAMES[c.provider]}
+                  {c.id === 0 ? "（未配置）" : ""}
+                </option>
+              ))}
+            </select>
+            {fields.provider && (
+              <p className="field-error" role="alert">
+                {fields.provider}
+              </p>
+            )}
+          </div>
+          <TextField label="网盘目录" value={form.remoteDir} onChange={set("remoteDir")} error={fields.remoteDir} hint="必须以 / 开头" autoComplete="off" />
+          <TextField label="每日备份时刻" type="time" value={form.scheduleTime} onChange={set("scheduleTime")} error={fields.scheduleTime} />
+          <div className="field field-check">
+            <input id={packId} type="checkbox" checked={form.packBeforeUpload} onChange={(e) => set("packBeforeUpload")(e.target.checked)} />
+            <label htmlFor={packId}>打包后备份</label>
+          </div>
+          <p className="field-hint">开启后先把整个目录打成一个 zip，再上传这一个压缩包。</p>
+          {form.packBeforeUpload && (
+            <>
+              <TextField
+                label="压缩包密码"
+                type="password"
+                value={form.archivePassword}
+                onChange={(v) => {
+                  set("archivePassword")(v);
+                  if (v) setClearPassword(false);
+                }}
+                error={fields.archivePassword}
+                hint={
+                  editing && task.hasArchivePassword && !clearPassword
+                    ? "留空则保持原密码。填写新密码会替换原来的。不设密码时，访达和资源管理器都可以直接打开。"
+                    : "留空则不加密，访达和资源管理器都可以直接打开。"
+                }
+                autoComplete="new-password"
+              />
+              {editing && task.hasArchivePassword && (
+                <div className="field field-check">
+                  <input
+                    id={clearId}
+                    type="checkbox"
+                    checked={clearPassword}
+                    onChange={(e) => {
+                      setClearPassword(e.target.checked);
+                      if (e.target.checked) set("archivePassword")("");
+                    }}
+                  />
+                  <label htmlFor={clearId}>清除已保存的密码</label>
+                </div>
+              )}
+              <div className="field">
+                <label htmlFor={encId}>压缩加密</label>
+                <select id={encId} value={form.archiveEncryption} onChange={(e) => set("archiveEncryption")(e.target.value)} aria-invalid={fields.archiveEncryption ? "true" : undefined} aria-describedby={`${encId}-hint`}>
+                  <option value="aes">AES-256（更安全，需 7-Zip 或 Keka）</option>
+                  <option value="zipcrypto">ZipCrypto（Windows 资源管理器可打开）</option>
+                </select>
+                <p className="field-hint" id={`${encId}-hint`}>
+                  只有填写了密码才会加密。访达不能打开任何带密码的 zip。ZipCrypto 可供 Windows 资源管理器直接打开。
+                </p>
+                {fields.archiveEncryption && (
+                  <p className="field-error" role="alert">
+                    {fields.archiveEncryption}
+                  </p>
+                )}
+              </div>
+              <div className="field field-check">
+                <input id={dateId} type="checkbox" checked={form.archiveByDate} onChange={(e) => set("archiveByDate")(e.target.checked)} />
+                <label htmlFor={dateId}>按日期命名，保留每次备份的压缩包</label>
+              </div>
+            </>
+          )}
+          <div className="field field-check">
+            <input id={enabledId} type="checkbox" checked={form.enabled} onChange={(e) => set("enabled")(e.target.checked)} />
+            <label htmlFor={enabledId}>启用定时备份</label>
+          </div>
+        </div>
+        <div className="dialog-sheet-foot">
+          {error && (
+            <p className="message message-error" role="alert">
+              <Icon name="alert" size={18} />
+              <span>{error}</span>
+            </p>
+          )}
+          <div className="btn-row">
+            <button className="btn btn-primary" type="submit" disabled={busy}>
+              {busy ? "正在保存…" : editing ? "保存修改" : "保存任务"}
+            </button>
+            <button className="btn" type="button" onClick={onCancel} disabled={busy}>
+              取消
             </button>
           </div>
-          <p className="field-hint" id={`${dirId}-hint`}>
-            从本机文件夹中选择，也可以直接粘贴路径。
-          </p>
-          {fields.localDir && (
-            <p className="field-error" id={`${dirId}-err`} role="alert">
-              {fields.localDir}
-            </p>
-          )}
-        </div>
-        {picking && (
-          <DirPicker
-            initialPath={form.localDir}
-            onSelect={(dir) => {
-              set("localDir")(dir);
-              setFields((current) => {
-                const next = { ...current };
-                delete next.localDir;
-                return next;
-              });
-              setPicking(false);
-            }}
-            onCancel={() => setPicking(false)}
-          />
-        )}
-        <div className="field">
-          <label htmlFor={selectId}>网盘</label>
-          <select id={selectId} value={form.provider} onChange={(e) => set("provider")(e.target.value)} aria-invalid={fields.provider ? "true" : undefined}>
-            <option value="">请选择网盘</option>
-            {clouds.map((c) => (
-              <option key={c.provider} value={c.provider} disabled={c.id === 0}>
-                {c.displayName || PROVIDER_NAMES[c.provider]}
-                {c.id === 0 ? "（未配置）" : ""}
-              </option>
-            ))}
-          </select>
-          {fields.provider && (
-            <p className="field-error" role="alert">
-              {fields.provider}
-            </p>
-          )}
-        </div>
-        <TextField label="网盘目录" value={form.remoteDir} onChange={set("remoteDir")} error={fields.remoteDir} hint="必须以 / 开头" autoComplete="off" />
-        <TextField label="每日备份时刻" type="time" value={form.scheduleTime} onChange={set("scheduleTime")} error={fields.scheduleTime} />
-        <div className="field field-check">
-          <input id={packId} type="checkbox" checked={form.packBeforeUpload} onChange={(e) => set("packBeforeUpload")(e.target.checked)} />
-          <label htmlFor={packId}>打包后备份</label>
-        </div>
-        <p className="field-hint">开启后先把整个目录打成一个 zip，再上传这一个压缩包。</p>
-        {form.packBeforeUpload && (
-          <>
-            <TextField
-              label="压缩包密码"
-              type="password"
-              value={form.archivePassword}
-              onChange={(v) => {
-                set("archivePassword")(v);
-                if (v) setClearPassword(false);
-              }}
-              error={fields.archivePassword}
-              hint={
-                editing && task.hasArchivePassword && !clearPassword
-                  ? "留空则保持原密码。填写新密码会替换原来的。不设密码时，访达和资源管理器都可以直接打开。"
-                  : "留空则不加密，访达和资源管理器都可以直接打开。"
-              }
-              autoComplete="new-password"
-            />
-            {editing && task.hasArchivePassword && (
-              <div className="field field-check">
-                <input
-                  id={clearId}
-                  type="checkbox"
-                  checked={clearPassword}
-                  onChange={(e) => {
-                    setClearPassword(e.target.checked);
-                    if (e.target.checked) set("archivePassword")("");
-                  }}
-                />
-                <label htmlFor={clearId}>清除已保存的密码</label>
-              </div>
-            )}
-            <div className="field">
-              <label htmlFor={encId}>压缩加密</label>
-              <select id={encId} value={form.archiveEncryption} onChange={(e) => set("archiveEncryption")(e.target.value)} aria-invalid={fields.archiveEncryption ? "true" : undefined} aria-describedby={`${encId}-hint`}>
-                <option value="aes">AES-256（更安全，需 7-Zip 或 Keka）</option>
-                <option value="zipcrypto">ZipCrypto（Windows 资源管理器可打开）</option>
-              </select>
-              <p className="field-hint" id={`${encId}-hint`}>
-                只有填写了密码才会加密。访达不能打开任何带密码的 zip。ZipCrypto 可供 Windows 资源管理器直接打开。
-              </p>
-              {fields.archiveEncryption && (
-                <p className="field-error" role="alert">
-                  {fields.archiveEncryption}
-                </p>
-              )}
-            </div>
-            <div className="field field-check">
-              <input id={dateId} type="checkbox" checked={form.archiveByDate} onChange={(e) => set("archiveByDate")(e.target.checked)} />
-              <label htmlFor={dateId}>按日期命名，保留每次备份的压缩包</label>
-            </div>
-          </>
-        )}
-        <div className="field field-check">
-          <input id={enabledId} type="checkbox" checked={form.enabled} onChange={(e) => set("enabled")(e.target.checked)} />
-          <label htmlFor={enabledId}>启用定时备份</label>
-        </div>
-        {error && (
-          <p className="message message-error" role="alert">
-            <Icon name="alert" size={18} />
-            <span>{error}</span>
-          </p>
-        )}
-        <div className="btn-row">
-          <button className="btn btn-primary" type="submit" disabled={busy}>
-            {busy ? "正在保存…" : editing ? "保存修改" : "保存任务"}
-          </button>
-          <button className="btn" type="button" onClick={onCancel} disabled={busy}>
-            取消
-          </button>
         </div>
       </form>
     </Dialog>

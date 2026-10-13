@@ -335,6 +335,60 @@ main:focus {
   font-size: 1.25rem;
 }
 
+/* 新建/编辑任务：标题和按钮固定，只有表单内容滚动 */
+.dialog:has(.dialog-sheet) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+.dialog-sheet {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 0;
+  /* 扣掉弹窗自身 1px 上下边框，避免底部按钮被裁切 */
+  max-height: calc(100vh - 3rem - 2px);
+  max-height: calc(100dvh - 3rem - 2px);
+  margin: 0;
+  overflow: hidden;
+}
+
+.dialog-sheet-head,
+.dialog-sheet-foot {
+  flex: 0 0 auto;
+  background: var(--card-bg);
+}
+
+.dialog .dialog-sheet-head {
+  margin: 0;
+  padding: 1.25rem 1.25rem 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.dialog-sheet-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-padding-block: 0.75rem;
+  padding: 1rem 1.25rem 0.25rem;
+}
+
+.dialog-sheet-foot {
+  padding: 0.85rem 1.25rem 1.25rem;
+  border-top: 1px solid var(--border);
+}
+
+.dialog-sheet-foot .message {
+  margin: 0 0 0.75rem;
+}
+
+.dialog-sheet-foot .btn-row {
+  margin-top: 0;
+}
+
 .dialog p {
   overflow-wrap: anywhere;
 }

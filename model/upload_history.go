@@ -7,12 +7,12 @@ import (
 
 type UploadHistory struct {
 	BaseModel
-	Id    uint32 `gorm:"column:id;type:INT(10) UNSIGNED;AUTO_INCREMENT;NOT NULL"`
-	Path  string `gorm:"column:path;type:VARCHAR(255);NOT NULL"`
-	Size  int32  `gorm:"column:size;type:INT(11);NOT NULL"`
-	FsId  string `gorm:"column:fs_id;type:VARCHAR(255);NOT NULL"`
-	Md5   string `gorm:"column:md5;type:VARCHAR(255);NOT NULL"`
-	Errno int32  `gorm:"column:errno;type:INT(11);NOT NULL"`
+	Id    uint32 `gorm:"column:id;primaryKey"`
+	Path  string `gorm:"column:path;size:255;NOT NULL"`
+	Size  int64  `gorm:"column:size;NOT NULL"`
+	FsId  string `gorm:"column:fs_id;size:255;NOT NULL"`
+	Md5   string `gorm:"column:md5;size:255;NOT NULL"`
+	Errno int32  `gorm:"column:errno;NOT NULL"`
 }
 
 func (UploadHistory) Create(t interface{}) bool {

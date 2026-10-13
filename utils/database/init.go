@@ -8,6 +8,9 @@ import (
 )
 
 func InitMysql() *gorm.DB {
+	if err := EnsureDatabase(global.MysqlDsn); err != nil {
+		panic("fail to create mysql database: " + err.Error())
+	}
 	db, err := gorm.Open(mysql.Open(global.MysqlDsn), &gorm.Config{
 		NamingStrategy: schema.NamingStrategy{
 			TablePrefix:   global.MysqlPrefix, //前缀

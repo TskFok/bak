@@ -216,11 +216,39 @@ func (a *api) saveCloud(ctx context.Context, acct store.CloudAccount) error {
 	return a.deps.Store.UpsertCloud(ctx, &acct)
 }
 
-func (a *api) openSecrets(acct store.CloudAccount) (cloudacct.Secrets, error) {
-	if acct.SecretBlob == "" {
-		return cloudacct.Secrets{}, nil
+func (a *api) openSecrets(acct *store.CloudAccount) (cloudacct.Secrets, error) {
+	var s cloudacct.Secrets
+	if acct.SecretBlob != "" {
+		opened, err := cloudacct.Open(a.deps.JWTSecret, acct.SecretBlob)
+		if err != nil {
+			return cloudacct.Secrets{}, err
+		}
+		s = opened
 	}
-	return cloudacct.Open(a.deps.JWTSecret, acct.SecretBlob)
+	if acct.Provider != "baidu" {
+		return s, nil
+	}
+	next, changed, err := baidutoken.Sync(s)
+	if err != nil {
+		log.Printf("同步百度令牌失败: %v", err)
+		return s, nil
+	}
+	if !changed {
+		return next, nil
+	}
+	blob, err := cloudacct.Seal(a.deps.JWTSecret, next)
+	if err != nil {
+		log.Printf("同步百度令牌失败: %v", err)
+		return s, nil
+	}
+	acct.SecretBlob = blob
+	if acct.Status == "" || acct.Status == "disconnected" {
+		acct.Status = "connected"
+	}
+	if err := a.saveCloud(context.Background(), *acct); err != nil {
+		log.Printf("同步百度令牌失败: %v", err)
+	}
+	return next, nil
 }
 
 // cloudView 返回对外展示的网盘信息，只含非敏感配置。
@@ -242,7 +270,7 @@ func (a *api) cloudView(name string, acct store.CloudAccount, found bool) map[st
 	}
 	cfg := map[string]string{}
 	if found {
-		if s, err := a.openSecrets(acct); err == nil {
+		if s, err := a.openSecrets(&acct); err == nil {
 			switch name {
 			case "webdav":
 				cfg["url"], cfg["username"] = s.URL, s.Username
@@ -335,7 +363,7 @@ func (a *api) putCloud(w http.ResponseWriter, req *http.Request) {
 	}
 	var prev cloudacct.Secrets
 	if found {
-		if prev, err = a.openSecrets(old); err != nil {
+		if prev, err = a.openSecrets(&old); err != nil {
 			prev = cloudacct.Secrets{} // 旧密文无法解密时视为未配置，要求重新填写
 		}
 	}
@@ -419,7 +447,7 @@ func (a *api) loadConfiguredCloud(w http.ResponseWriter, req *http.Request) (str
 		http.Error(w, "请先保存网盘配置", http.StatusNotFound)
 		return "", store.CloudAccount{}, cloudacct.Secrets{}, false
 	}
-	secrets, err := a.openSecrets(acct)
+	secrets, err := a.openSecrets(&acct)
 	if err != nil {
 		http.Error(w, "网盘配置无法读取，请重新保存", http.StatusConflict)
 		return "", store.CloudAccount{}, cloudacct.Secrets{}, false
@@ -770,7 +798,7 @@ func (a *api) runTask(w http.ResponseWriter, req *http.Request) {
 		serverError(w)
 		return
 	}
-	secrets, err := a.openSecrets(acct)
+	secrets, err := a.openSecrets(&acct)
 	if err != nil {
 		a.failRun(ctx, w, task, "网盘配置无法读取，请重新保存")
 		return
@@ -856,7 +884,7 @@ func (a *api) runScheduled(ctx context.Context, task backup.Task) error {
 	if err != nil {
 		return err
 	}
-	secrets, err := a.openSecrets(acct)
+	secrets, err := a.openSecrets(&acct)
 	if err != nil {
 		_, err = a.recordFailure(ctx, task, "schedule", "网盘配置无法读取，请重新保存")
 		return err

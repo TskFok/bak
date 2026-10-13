@@ -103,7 +103,11 @@ func (backupFileResult) TableName() string { return tableName("backup_file_resul
 
 func (m *backupFileResult) BeforeCreate(*gorm.DB) error { touch(&m.BaseModel); return nil }
 
-// AutoMigrate 创建或更新本任务新增的五张表。
+// AutoMigrate 创建或补齐本应用使用的表。已有表只做结构对齐，不删除数据。
+// token、upload_history 使用单数表名，与数据库 NamingStrategy 一致。
 func AutoMigrate(db *gorm.DB) error {
-	return db.AutoMigrate(&User{}, &CloudAccount{}, &backupTask{}, &backupRun{}, &backupFileResult{})
+	return db.AutoMigrate(
+		&User{}, &CloudAccount{}, &backupTask{}, &backupRun{}, &backupFileResult{},
+		&model.Token{}, &model.UploadHistory{},
+	)
 }

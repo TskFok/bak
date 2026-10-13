@@ -63,6 +63,49 @@ func TestMySQLAutoMigrateTwice(t *testing.T) {
 	}
 }
 
+func TestMySQLAutoMigrateWidensUploadSize(t *testing.T) {
+	db := openMySQLMigrateDB(t)
+	prev := global.MysqlPrefix
+	global.MysqlPrefix = ""
+	t.Cleanup(func() { global.MysqlPrefix = prev })
+
+	if err := db.Exec(`CREATE TABLE upload_history (
+		id int unsigned NOT NULL AUTO_INCREMENT,
+		path varchar(255) NOT NULL,
+		size int NOT NULL,
+		fs_id varchar(255) NOT NULL,
+		md5 varchar(255) NOT NULL,
+		errno int NOT NULL,
+		created_at datetime NOT NULL,
+		updated_at datetime NOT NULL,
+		PRIMARY KEY (id)
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := AutoMigrate(db); err != nil {
+		t.Fatal(err)
+	}
+	var dataType string
+	if err := db.Raw(`SELECT DATA_TYPE FROM information_schema.COLUMNS
+		WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'upload_history' AND COLUMN_NAME = 'size'`).Scan(&dataType).Error; err != nil {
+		t.Fatal(err)
+	}
+	if dataType != "bigint" {
+		t.Fatalf("size type = %s", dataType)
+	}
+	huge := int64(1 << 32)
+	if err := db.Exec(`INSERT INTO upload_history (path, size, fs_id, md5, errno, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NOW(), NOW())`, "/big", huge, "fs", "md", 0).Error; err != nil {
+		t.Fatal(err)
+	}
+	var got int64
+	if err := db.Raw(`SELECT size FROM upload_history WHERE path = ?`, "/big").Scan(&got).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got != huge {
+		t.Fatalf("size = %d", got)
+	}
+}
+
 func openMySQLMigrateDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	adminDSN := os.Getenv("BAIDUBAK_TEST_MYSQL_ADMIN_DSN")
@@ -83,7 +126,7 @@ func openMySQLMigrateDB(t *testing.T) *gorm.DB {
 	if _, err := admin.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS baidubak_migrate_test"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := admin.ExecContext(ctx, "DROP TABLE IF EXISTS baidubak_migrate_test.users, baidubak_migrate_test.cloud_accounts, baidubak_migrate_test.backup_tasks, baidubak_migrate_test.backup_runs, baidubak_migrate_test.backup_file_results"); err != nil {
+	if _, err := admin.ExecContext(ctx, "DROP TABLE IF EXISTS baidubak_migrate_test.users, baidubak_migrate_test.cloud_accounts, baidubak_migrate_test.backup_tasks, baidubak_migrate_test.backup_runs, baidubak_migrate_test.backup_file_results, baidubak_migrate_test.token, baidubak_migrate_test.upload_history"); err != nil {
 		t.Fatal(err)
 	}
 

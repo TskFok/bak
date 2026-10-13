@@ -219,8 +219,9 @@ func TestHistoryRecord(t *testing.T) {
 	if h.Size != 10 || h.FsId != "99" || h.Path != "/bak/a" || h.Md5 != "m" {
 		t.Fatalf("%+v", h)
 	}
-	big := historyRecord(int64(math.MaxInt32)+1, "/bak/a", "99", "m", 0)
-	if big.Size != 0 || big.FsId != "99" {
+	bigSize := int64(math.MaxInt32) + 1
+	big := historyRecord(bigSize, "/bak/a", "99", "m", 0)
+	if big.Size != bigSize || big.FsId != "99" {
 		t.Fatalf("%+v", big)
 	}
 	edge := historyRecord(math.MaxInt32, "/bak/a", "99", "m", 0)

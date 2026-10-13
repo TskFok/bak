@@ -1,9 +1,8 @@
 package cmd
 
 import (
+	"BaiduYunPanBak/internal/baidutoken"
 	"BaiduYunPanBak/internal/provider/baidu"
-	"BaiduYunPanBak/model"
-	"BaiduYunPanBak/utils/cache"
 	"context"
 	"fmt"
 	"path/filepath"
@@ -24,11 +23,11 @@ var uploadCmd = &cobra.Command{
 			return fmt.Errorf("需要本地文件的绝对路径: %s", localPath)
 		}
 
-		token := cache.Get("access_token")
-		if token == "" {
-			tk := model.Token{}
-			token = tk.Find().AccessToken
+		sec, err := baidutoken.Current()
+		if err != nil {
+			return err
 		}
+		token := sec.AccessToken
 
 		client := baidu.New(token, baidu.NewOpenAPIUploader(), filepath.Join("runtime", "chunks"), baidu.DefaultChunkSize)
 		client.OnCreated = baidu.SaveHistory

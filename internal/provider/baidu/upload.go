@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"time"
@@ -128,13 +127,9 @@ func RemotePath(localPath string, now time.Time) string {
 	return "/bak/" + now.Format("2006-01-02") + "/" + filepath.Base(localPath)
 }
 
-// historyRecord 构造上传历史。现有 size 列为 int32，超出范围时记为 0，fs_id 仍保留。
+// historyRecord 构造上传历史。size 使用 int64，超过 2GB 的文件也保留真实大小。
 func historyRecord(size int64, remote, fsID, md5 string, errno int) *model.UploadHistory {
-	var s int32
-	if size >= 0 && size <= math.MaxInt32 {
-		s = int32(size)
-	}
-	return &model.UploadHistory{Size: s, Path: remote, FsId: fsID, Md5: md5, Errno: int32(errno)}
+	return &model.UploadHistory{Size: size, Path: remote, FsId: fsID, Md5: md5, Errno: int32(errno)}
 }
 
 // SaveHistory 写入 model.UploadHistory。

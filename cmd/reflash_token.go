@@ -6,7 +6,6 @@ package cmd
 import (
 	"BaiduYunPanBak/global"
 	"BaiduYunPanBak/internal/baidutoken"
-	"BaiduYunPanBak/model"
 	"BaiduYunPanBak/tool/openapi"
 	"context"
 	"fmt"
@@ -19,12 +18,20 @@ var reflashTokenCmd = &cobra.Command{
 	Short: "刷新token持续时间",
 	Long:  "刷新token持续时间",
 	Run: func(cmd *cobra.Command, args []string) {
-		tk := &model.Token{}
-		token := tk.Find()
-
-		refreshToken := token.RefreshToken
-		clientId := global.BaiduYunClientId
-		clientSecret := global.BaiduYunClientSecret
+		sec, err := baidutoken.Current()
+		if err != nil {
+			fmt.Printf("读取令牌失败: %v\n", err)
+			return
+		}
+		refreshToken := sec.RefreshToken
+		clientId := sec.ClientID
+		clientSecret := sec.ClientSecret
+		if clientId == "" {
+			clientId = global.BaiduYunClientId
+		}
+		if clientSecret == "" {
+			clientSecret = global.BaiduYunClientSecret
+		}
 
 		configuration := openapi.NewConfiguration()
 		apiClient := openapi.NewAPIClient(configuration)

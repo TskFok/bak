@@ -7,10 +7,10 @@ import (
 
 type Token struct {
 	BaseModel
-	Id           uint32 `gorm:"column:id;type:INT(10) UNSIGNED;AUTO_INCREMENT;NOT NULL"`
-	AccessToken  string `gorm:"column:access_token;type:VARCHAR(255);NOT NULL"`
-	RefreshToken string `gorm:"column:refresh_token;type:VARCHAR(255);NOT NULL"`
-	ExpiresIn    int32  `gorm:"column:expires_in;type:INT(11);NOT NULL"`
+	Id           uint32 `gorm:"column:id;primaryKey"`
+	AccessToken  string `gorm:"column:access_token;size:255;NOT NULL"`
+	RefreshToken string `gorm:"column:refresh_token;size:255;NOT NULL"`
+	ExpiresIn    int32  `gorm:"column:expires_in;NOT NULL"`
 }
 
 func (Token) Create(t interface{}) bool {

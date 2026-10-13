@@ -29,10 +29,16 @@ func defaultTokenWriter(t model.Token) error {
 	if global.DataBase == nil {
 		return errors.New("数据库未初始化")
 	}
+	now := model.LocalTime(time.Now())
 	cur := model.Token{}.Find()
 	if cur.Id != 0 {
 		ok := model.Token{}.Update(
-			map[string]interface{}{"access_token": t.AccessToken, "refresh_token": t.RefreshToken, "expires_in": t.ExpiresIn},
+			map[string]interface{}{
+				"access_token":  t.AccessToken,
+				"refresh_token": t.RefreshToken,
+				"expires_in":    t.ExpiresIn,
+				"updated_at":    time.Time(now),
+			},
 			map[string]interface{}{"id": cur.Id},
 		)
 		if !ok {
@@ -40,6 +46,11 @@ func defaultTokenWriter(t model.Token) error {
 		}
 		return nil
 	}
+	if t.CreatedAt == nil {
+		created := now
+		t.CreatedAt = &created
+	}
+	t.UpdatedAt = &now
 	if !t.Create(&t) {
 		return errors.New("写入 tokens 表失败")
 	}

@@ -58,14 +58,18 @@ func (m *CloudAccount) BeforeCreate(*gorm.DB) error { touch(&m.BaseModel); retur
 // backupTask 对应 backup_tasks 表。
 type backupTask struct {
 	model.BaseModel
-	ID              uint       `gorm:"column:id;primaryKey;autoIncrement"`
-	Name            string     `gorm:"column:name;type:VARCHAR(255);NOT NULL"`
-	LocalDir        string     `gorm:"column:local_dir;type:VARCHAR(1024);NOT NULL"`
-	CloudAccountID  uint       `gorm:"column:cloud_account_id;NOT NULL"`
-	RemoteDir       string     `gorm:"column:remote_dir;type:VARCHAR(1024);NOT NULL"`
-	ScheduleTime    string     `gorm:"column:schedule_time;type:VARCHAR(5);NOT NULL"`
-	Enabled         bool       `gorm:"column:enabled;NOT NULL"`
-	LastScheduledOn *time.Time `gorm:"column:last_scheduled_on;type:DATE"`
+	ID                uint       `gorm:"column:id;primaryKey;autoIncrement"`
+	Name              string     `gorm:"column:name;type:VARCHAR(255);NOT NULL"`
+	LocalDir          string     `gorm:"column:local_dir;type:VARCHAR(1024);NOT NULL"`
+	CloudAccountID    uint       `gorm:"column:cloud_account_id;NOT NULL"`
+	RemoteDir         string     `gorm:"column:remote_dir;type:VARCHAR(1024);NOT NULL"`
+	ScheduleTime      string     `gorm:"column:schedule_time;type:VARCHAR(5);NOT NULL"`
+	Enabled           bool       `gorm:"column:enabled;NOT NULL"`
+	PackBeforeUpload  bool       `gorm:"column:pack_before_upload;not null;default:0"`
+	ArchivePassword   string     `gorm:"column:archive_password;type:TEXT"`
+	ArchiveByDate     bool       `gorm:"column:archive_by_date;not null;default:0"`
+	ArchiveEncryption string     `gorm:"column:archive_encryption;type:VARCHAR(16)"`
+	LastScheduledOn   *time.Time `gorm:"column:last_scheduled_on;type:DATE"`
 }
 
 func (backupTask) TableName() string { return tableName("backup_tasks") }
@@ -85,6 +89,7 @@ type backupRun struct {
 	SkipCount    int        `gorm:"column:skip_count;NOT NULL"`
 	FailCount    int        `gorm:"column:fail_count;NOT NULL"`
 	ErrorSummary string     `gorm:"column:error_summary;type:TEXT"`
+	ProgressNote string     `gorm:"column:progress_note;type:TEXT"`
 }
 
 func (backupRun) TableName() string { return tableName("backup_runs") }

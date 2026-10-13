@@ -43,12 +43,16 @@ func InitConfig() {
 	global.BaiduYunClientId = viper.Get("baidu_yun.client_id").(string)
 	global.BaiduYunClientSecret = viper.Get("baidu_yun.client_secret").(string)
 	global.JwtSecret = strings.TrimSpace(viper.GetString("jwt.secret"))
-	if global.JwtSecret == "" {
-		panic("jwt.secret 为空：请设置环境变量 BAIDUBAK_JWT_SECRET，不要把密钥写入仓库")
-	}
 	global.JwtExpire = viper.GetInt("jwt.expire")
 	if global.JwtExpire <= 0 {
 		global.JwtExpire = 3
+	}
+}
+
+// RequireJWT 在库表就绪后调用。密钥只用于会话和凭据，不应该挡住建表。
+func RequireJWT() {
+	if strings.TrimSpace(global.JwtSecret) == "" {
+		panic("jwt.secret 为空：请设置环境变量 BAIDUBAK_JWT_SECRET，不要把密钥写入仓库")
 	}
 }
 

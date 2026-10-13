@@ -230,12 +230,17 @@ func TestMissingJWTSecretPanics(t *testing.T) {
 	t.Setenv("BAIDUBAK_CONFIG", "")
 	withNoDefaultMount(t)
 
+	InitConfig()
+	if global.MysqlDsn == "" {
+		t.Fatal("empty jwt secret blocked config load")
+	}
+
 	defer func() {
 		if recover() == nil {
 			t.Fatal("empty jwt secret did not panic")
 		}
 	}()
-	InitConfig()
+	RequireJWT()
 }
 
 func TestEmbeddedConfigOmitsJWTSecret(t *testing.T) {

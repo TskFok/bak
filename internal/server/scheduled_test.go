@@ -5,11 +5,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"bak/internal/backup"
 	"bak/internal/cloudacct"
+	"bak/internal/crypto"
 	"bak/internal/provider"
 	"bak/internal/store"
 )
@@ -84,5 +86,60 @@ func TestScheduleRunnerRefreshesAndRunsAsSchedule(t *testing.T) {
 	}
 	if last = st.runs[len(st.runs)-1]; last.Trigger != "schedule" || last.Status != "failed" {
 		t.Fatalf("missing cloud run = %+v", last)
+	}
+}
+
+func TestScheduleRunnerDecryptsArchivePassword(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("scheduled"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st, prov := &memAPIStore{}, &fakeProvider{}
+	_, run := NewMuxWithRunner(Deps{
+		AuthDeps:  AuthDeps{Users: &memAuthUsers{}, Sessions: &memSessions{}, SessionTTL: time.Hour},
+		Store:     st,
+		JWTSecret: testJWTSecret,
+		Providers: func(name string, s cloudacct.Secrets) (provider.Provider, error) { return prov, nil },
+		Tokens:    &fakeTokens{},
+	})
+	ctx := context.Background()
+	blob, err := cloudacct.Seal(testJWTSecret, cloudacct.Secrets{URL: "https://dav.example.com", Username: "a", Password: "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertCloud(ctx, &store.CloudAccount{Provider: "webdav", SecretBlob: blob, Status: "connected"}); err != nil {
+		t.Fatal(err)
+	}
+	enc, err := crypto.Encrypt(testJWTSecret, "zip-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := backup.Task{
+		Name: "docs", LocalDir: dir, CloudAccountID: st.clouds[0].ID, RemoteDir: "/bak",
+		ScheduleTime: "01:00", Enabled: true, PackBeforeUpload: true, ArchivePassword: enc,
+	}
+	if err := st.CreateTask(ctx, &task); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.runs) != 1 || st.runs[0].Trigger != "schedule" || st.runs[0].Status != "success" {
+		t.Fatalf("runs %+v", st.runs)
+	}
+	if st.runs[0].ErrorSummary != "" && strings.Contains(st.runs[0].ErrorSummary, "zip-secret") {
+		t.Fatalf("summary leaked password: %s", st.runs[0].ErrorSummary)
+	}
+	prov.mu.Lock()
+	defer prov.mu.Unlock()
+	if len(prov.uploaded) != 1 || prov.uploaded[0] != "/bak/docs.zip" || len(prov.bodies) != 1 {
+		t.Fatalf("uploaded %v bodies %d", prov.uploaded, len(prov.bodies))
+	}
+	entries, err := testZipEntries(prov.bodies[0], "zip-secret")
+	if err != nil || entries["a.txt"] != "scheduled" {
+		t.Fatalf("%v %v", entries, err)
+	}
+	if _, err := testZipEntries(prov.bodies[0], enc); err == nil {
+		t.Fatal("archive password was the stored ciphertext")
 	}
 }

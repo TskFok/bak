@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,9 +18,11 @@ import (
 
 	"bak/internal/backup"
 	"bak/internal/cloudacct"
+	"bak/internal/crypto"
 	"bak/internal/provider"
 	"bak/internal/store"
 
+	"github.com/yeka/zip"
 	"gorm.io/gorm"
 )
 
@@ -78,6 +81,7 @@ func (m *memAPIStore) UpdateRunProgress(ctx context.Context, run backup.Run) err
 	for i := range m.runs {
 		if m.runs[i].ID == run.ID && m.runs[i].Status == "running" {
 			m.runs[i].SuccessCount, m.runs[i].SkipCount, m.runs[i].FailCount = run.SuccessCount, run.SkipCount, run.FailCount
+			m.runs[i].ProgressNote = run.ProgressNote
 		}
 	}
 	return nil
@@ -183,6 +187,7 @@ type fakeProvider struct {
 	mu       sync.Mutex
 	testErr  error
 	uploaded []string
+	bodies   [][]byte
 }
 
 func (f *fakeProvider) Test(ctx context.Context) error { return f.testErr }
@@ -190,9 +195,14 @@ func (f *fakeProvider) EnsureDir(ctx context.Context, remoteDir string) error {
 	return nil
 }
 func (f *fakeProvider) Upload(ctx context.Context, localPath, remotePath string) error {
+	body, err := os.ReadFile(localPath)
+	if err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.uploaded = append(f.uploaded, remotePath)
+	f.bodies = append(f.bodies, body)
 	return nil
 }
 
@@ -864,6 +874,147 @@ func TestListCloudsClearsBaiduSyncErrorAfterSuccess(t *testing.T) {
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"connected"`) || strings.Contains(rec.Body.String(), "refresh rejected") {
 		t.Fatalf("list %d %s", rec.Code, rec.Body.String())
 	}
+}
+
+func TestTaskPackBeforeUpload(t *testing.T) {
+	env := newAPIEnv(t)
+	env.saveWebDAV(t)
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("packed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"name":"docs","localDir":"` + dir + `","provider":"webdav","remoteDir":"/bak","scheduleTime":"02:00","packBeforeUpload":true,"archivePassword":"zip-secret"}`
+	rec := env.do(http.MethodPost, "/api/tasks", body)
+	if rec.Code != 200 {
+		t.Fatalf("create %d %s", rec.Code, rec.Body.String())
+	}
+	for _, bad := range []string{"zip-secret", "archivePassword", env.store.tasks[0].ArchivePassword} {
+		if bad != "" && strings.Contains(rec.Body.String(), bad) {
+			t.Fatalf("create leaks %q: %s", bad, rec.Body.String())
+		}
+	}
+	var created struct {
+		ID                 uint `json:"id"`
+		PackBeforeUpload   bool `json:"packBeforeUpload"`
+		HasArchivePassword bool `json:"hasArchivePassword"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil || !created.PackBeforeUpload || !created.HasArchivePassword {
+		t.Fatalf("created %s %v", rec.Body.String(), err)
+	}
+	plain, err := crypto.Decrypt(testJWTSecret, env.store.tasks[0].ArchivePassword)
+	if err != nil || plain != "zip-secret" {
+		t.Fatalf("stored password %q %v", plain, err)
+	}
+
+	rec = env.do(http.MethodGet, "/api/tasks", "")
+	if strings.Contains(rec.Body.String(), "zip-secret") || strings.Contains(rec.Body.String(), env.store.tasks[0].ArchivePassword) {
+		t.Fatalf("list leaks password: %s", rec.Body.String())
+	}
+
+	started := env.startRun(t, "/api/tasks/1/run")
+	final := env.waitRun(t, uint(started["id"].(float64)))
+	if final["status"] != "success" || final["successCount"].(float64) != 1 {
+		t.Fatalf("run %v", final)
+	}
+	env.prov.mu.Lock()
+	uploaded := append([]string(nil), env.prov.uploaded...)
+	var zipBody []byte
+	if len(env.prov.bodies) > 0 {
+		zipBody = append([]byte(nil), env.prov.bodies[0]...)
+	}
+	env.prov.mu.Unlock()
+	if len(uploaded) != 1 || uploaded[0] != "/bak/docs.zip" {
+		t.Fatalf("uploaded %v", uploaded)
+	}
+	entries, err := testZipEntries(zipBody, "zip-secret")
+	if err != nil || entries["a.txt"] != "packed" {
+		t.Fatalf("zip %v %v", entries, err)
+	}
+	if _, err := testZipEntries(zipBody, ""); err == nil {
+		t.Fatal("archive opened without password")
+	}
+
+	// 暂停定时不带打包字段，密码和选项都保留。
+	rec = env.do(http.MethodPut, "/api/tasks/1", `{"name":"docs","localDir":"`+dir+`","provider":"webdav","remoteDir":"/bak","scheduleTime":"02:00","enabled":false}`)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"packBeforeUpload":true`) || !strings.Contains(rec.Body.String(), `"hasArchivePassword":true`) {
+		t.Fatalf("toggle %d %s", rec.Code, rec.Body.String())
+	}
+	if env.store.tasks[0].Enabled || !env.store.tasks[0].PackBeforeUpload {
+		t.Fatalf("task %+v", env.store.tasks[0])
+	}
+	plain, err = crypto.Decrypt(testJWTSecret, env.store.tasks[0].ArchivePassword)
+	if err != nil || plain != "zip-secret" {
+		t.Fatalf("password cleared %q %v", plain, err)
+	}
+
+	rec = env.do(http.MethodPut, "/api/tasks/1", `{"name":"docs","localDir":"`+dir+`","provider":"webdav","remoteDir":"/bak","scheduleTime":"02:00","packBeforeUpload":true,"archivePassword":""}`)
+	if rec.Code != 200 || strings.Contains(rec.Body.String(), `"hasArchivePassword":true`) {
+		t.Fatalf("clear password %d %s", rec.Code, rec.Body.String())
+	}
+	if env.store.tasks[0].ArchivePassword != "" || !env.store.tasks[0].PackBeforeUpload {
+		t.Fatalf("after clear %+v", env.store.tasks[0])
+	}
+
+	long := strings.Repeat("密", 129)
+	rec = env.do(http.MethodPost, "/api/tasks", `{"name":"n","localDir":"`+dir+`","provider":"webdav","remoteDir":"/bak","archivePassword":"`+long+`"}`)
+	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "archivePassword") {
+		t.Fatalf("long password %d %s", rec.Code, rec.Body.String())
+	}
+
+	// 编辑已有任务：打开按日期留档、改成 ZipCrypto，并更换密码。省略的字段不会把定时开关改掉。
+	rec = env.do(http.MethodPut, "/api/tasks/1", `{"name":"docs","localDir":"`+dir+`","provider":"webdav","remoteDir":"/bak","scheduleTime":"04:15","packBeforeUpload":true,"archiveByDate":true,"archiveEncryption":"zipcrypto","archivePassword":"next-secret"}`)
+	if rec.Code != 200 {
+		t.Fatalf("edit %d %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "next-secret") {
+		t.Fatalf("edit leaks password: %s", rec.Body.String())
+	}
+	var edited struct {
+		PackBeforeUpload   bool   `json:"packBeforeUpload"`
+		HasArchivePassword bool   `json:"hasArchivePassword"`
+		ArchiveByDate      bool   `json:"archiveByDate"`
+		ArchiveEncryption  string `json:"archiveEncryption"`
+		ScheduleTime       string `json:"scheduleTime"`
+		Enabled            bool   `json:"enabled"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &edited); err != nil {
+		t.Fatal(err)
+	}
+	if !edited.PackBeforeUpload || !edited.HasArchivePassword || !edited.ArchiveByDate || edited.ArchiveEncryption != "zipcrypto" || edited.ScheduleTime != "04:15" || edited.Enabled {
+		t.Fatalf("edited %+v body %s", edited, rec.Body.String())
+	}
+	plain, err = crypto.Decrypt(testJWTSecret, env.store.tasks[0].ArchivePassword)
+	if err != nil || plain != "next-secret" {
+		t.Fatalf("new password %q %v", plain, err)
+	}
+	rec = env.do(http.MethodPut, "/api/tasks/1", `{"name":"docs","localDir":"`+dir+`","provider":"webdav","remoteDir":"/bak","archiveEncryption":"nope"}`)
+	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "archiveEncryption") {
+		t.Fatalf("bad encryption %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func testZipEntries(data []byte, password string) (map[string]string, error) {
+	r, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for _, f := range r.File {
+		if password != "" {
+			f.SetPassword(password)
+		}
+		rc, err := f.Open()
+		if err != nil {
+			return nil, err
+		}
+		b, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			return nil, err
+		}
+		out[f.Name] = string(b)
+	}
+	return out, nil
 }
 
 func (e *apiEnv) waitRunOnce(t *testing.T, id uint) map[string]any {

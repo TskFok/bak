@@ -183,6 +183,40 @@ func TestUpdateTask(t *testing.T) {
 	}
 }
 
+func TestTaskPackFieldsRoundTrip(t *testing.T) {
+	s := newTestStore(t, "pack_fields")
+	ctx := context.Background()
+	task := backup.Task{
+		Name: "t", LocalDir: "/tmp", RemoteDir: "/bak", ScheduleTime: "09:00",
+		Enabled: true, CloudAccountID: 1, PackBeforeUpload: true, ArchivePassword: "cipher-blob",
+		ArchiveByDate: true, ArchiveEncryption: "zipcrypto",
+	}
+	if err := s.CreateTask(ctx, &task); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ListTasks(ctx)
+	if err != nil || len(got) != 1 || !got[0].PackBeforeUpload || got[0].ArchivePassword != "cipher-blob" || !got[0].ArchiveByDate || got[0].ArchiveEncryption != "zipcrypto" {
+		t.Fatalf("%+v %v", got, err)
+	}
+	upd := got[0]
+	upd.PackBeforeUpload = false
+	upd.ArchivePassword = ""
+	upd.ArchiveByDate = false
+	upd.ArchiveEncryption = "aes"
+	upd.Name = "t2"
+	if err := s.UpdateTask(ctx, &upd); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.ListTasks(ctx)
+	if err != nil || got[0].PackBeforeUpload || got[0].ArchivePassword != "" || got[0].ArchiveByDate || got[0].ArchiveEncryption != "aes" || got[0].Name != "t2" {
+		t.Fatalf("%+v %v", got, err)
+	}
+	enabled, err := s.ListEnabled(ctx)
+	if err != nil || len(enabled) != 1 || enabled[0].ArchivePassword != "" {
+		t.Fatalf("%+v %v", enabled, err)
+	}
+}
+
 func TestUpdateRunProgress(t *testing.T) {
 	s := newTestStore(t, "run_progress")
 	ctx := context.Background()
@@ -195,17 +229,18 @@ func TestUpdateRunProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	run.SuccessCount, run.SkipCount, run.FailCount = 2, 1, 3
+	run.ProgressNote = "正在压缩 2/3"
 	if err := s.UpdateRunProgress(ctx, *run); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.GetRun(ctx, run.ID)
-	if err != nil || got.Status != "running" || got.FinishedAt != nil || got.SuccessCount != 2 || got.SkipCount != 1 || got.FailCount != 3 {
+	if err != nil || got.Status != "running" || got.FinishedAt != nil || got.SuccessCount != 2 || got.SkipCount != 1 || got.FailCount != 3 || got.ProgressNote != "正在压缩 2/3" {
 		t.Fatalf("%+v %v", got, err)
 	}
 
 	// 已结束的运行不会被进度更新改写。
 	fin := time.Now()
-	run.Status, run.FinishedAt, run.SuccessCount = "partial", &fin, 5
+	run.Status, run.FinishedAt, run.SuccessCount, run.ProgressNote = "partial", &fin, 5, ""
 	if err := s.FinishRun(ctx, *run); err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +249,7 @@ func TestUpdateRunProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ = s.GetRun(ctx, run.ID)
-	if got.SuccessCount != 5 || got.Status != "partial" {
+	if got.SuccessCount != 5 || got.Status != "partial" || got.ProgressNote != "" {
 		t.Fatalf("%+v", got)
 	}
 }

@@ -91,6 +91,7 @@ func (s *GormStore) FinishRun(ctx context.Context, run backup.Run) error {
 		"skip_count":    run.SkipCount,
 		"fail_count":    run.FailCount,
 		"error_summary": run.ErrorSummary,
+		"progress_note": run.ProgressNote,
 		"updated_at":    localNow(),
 	}).Error
 }
@@ -101,6 +102,7 @@ func (s *GormStore) UpdateRunProgress(ctx context.Context, run backup.Run) error
 		"success_count": run.SuccessCount,
 		"skip_count":    run.SkipCount,
 		"fail_count":    run.FailCount,
+		"progress_note": run.ProgressNote,
 		"updated_at":    localNow(),
 	}).Error
 }
@@ -203,13 +205,17 @@ func (s *GormStore) UpdateTask(ctx context.Context, task *backup.Task) error {
 		return err
 	}
 	return s.db.WithContext(ctx).Model(&row).Updates(map[string]interface{}{
-		"name":             task.Name,
-		"local_dir":        task.LocalDir,
-		"cloud_account_id": task.CloudAccountID,
-		"remote_dir":       task.RemoteDir,
-		"schedule_time":    task.ScheduleTime,
-		"enabled":          task.Enabled,
-		"updated_at":       localNow(),
+		"name":               task.Name,
+		"local_dir":          task.LocalDir,
+		"cloud_account_id":   task.CloudAccountID,
+		"remote_dir":         task.RemoteDir,
+		"schedule_time":      task.ScheduleTime,
+		"enabled":            task.Enabled,
+		"pack_before_upload": task.PackBeforeUpload,
+		"archive_password":   task.ArchivePassword,
+		"archive_by_date":    task.ArchiveByDate,
+		"archive_encryption": task.ArchiveEncryption,
+		"updated_at":         localNow(),
 	}).Error
 }
 
@@ -277,6 +283,8 @@ func taskToRow(t backup.Task) backupTask {
 	return backupTask{
 		ID: t.ID, Name: t.Name, LocalDir: t.LocalDir, CloudAccountID: t.CloudAccountID,
 		RemoteDir: t.RemoteDir, ScheduleTime: t.ScheduleTime, Enabled: t.Enabled,
+		PackBeforeUpload: t.PackBeforeUpload, ArchivePassword: t.ArchivePassword,
+		ArchiveByDate: t.ArchiveByDate, ArchiveEncryption: t.ArchiveEncryption,
 		LastScheduledOn: t.LastScheduledOn,
 	}
 }
@@ -287,6 +295,8 @@ func tasksFromRows(rows []backupTask) []backup.Task {
 		tasks = append(tasks, backup.Task{
 			ID: r.ID, CloudAccountID: r.CloudAccountID, Name: r.Name, LocalDir: r.LocalDir,
 			RemoteDir: r.RemoteDir, ScheduleTime: r.ScheduleTime, Enabled: r.Enabled,
+			PackBeforeUpload: r.PackBeforeUpload, ArchivePassword: r.ArchivePassword,
+			ArchiveByDate: r.ArchiveByDate, ArchiveEncryption: r.ArchiveEncryption,
 			LastScheduledOn: r.LastScheduledOn,
 		})
 	}
@@ -298,7 +308,7 @@ func runToRow(r backup.Run) backupRun {
 		ID: r.ID, TaskID: r.TaskID, Trigger: r.Trigger, Status: r.Status,
 		StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
 		SuccessCount: r.SuccessCount, SkipCount: r.SkipCount, FailCount: r.FailCount,
-		ErrorSummary: r.ErrorSummary,
+		ErrorSummary: r.ErrorSummary, ProgressNote: r.ProgressNote,
 	}
 }
 
@@ -307,5 +317,6 @@ func runFromRow(r backupRun) backup.Run {
 		ID: r.ID, TaskID: r.TaskID, Trigger: r.Trigger, Status: r.Status,
 		ErrorSummary: r.ErrorSummary, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
 		SuccessCount: r.SuccessCount, SkipCount: r.SkipCount, FailCount: r.FailCount,
+		ProgressNote: r.ProgressNote,
 	}
 }

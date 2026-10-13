@@ -18,7 +18,8 @@ import (
 type Fileprecreateresponse struct {
 	Uploadid *string `json:"uploadid,omitempty"`
 	ReturnType *int32 `json:"return_type,omitempty"`
-	BlockList *[]string `json:"block_list,omitempty"`
+	// BlockList 是预上传响应里待上传的分片序号。百度返回数字，与请求里的 MD5 字符串数组不同。
+	BlockList *[]int32 `json:"block_list,omitempty"`
 	Errno *int32 `json:"errno,omitempty"`
 	RequestId *int64 `json:"request_id,omitempty"`
 }
@@ -105,9 +106,9 @@ func (o *Fileprecreateresponse) SetReturnType(v int32) {
 }
 
 // GetBlockList returns the BlockList field value if set, zero value otherwise.
-func (o *Fileprecreateresponse) GetBlockList() []string {
+func (o *Fileprecreateresponse) GetBlockList() []int32 {
 	if o == nil || o.BlockList == nil {
-		var ret []string
+		var ret []int32
 		return ret
 	}
 	return *o.BlockList
@@ -115,7 +116,7 @@ func (o *Fileprecreateresponse) GetBlockList() []string {
 
 // GetBlockListOk returns a tuple with the BlockList field value if set, nil otherwise
 // and a boolean to check if the value has been set.
-func (o *Fileprecreateresponse) GetBlockListOk() (*[]string, bool) {
+func (o *Fileprecreateresponse) GetBlockListOk() (*[]int32, bool) {
 	if o == nil || o.BlockList == nil {
 		return nil, false
 	}
@@ -131,8 +132,8 @@ func (o *Fileprecreateresponse) HasBlockList() bool {
 	return false
 }
 
-// SetBlockList gets a reference to the given []string and assigns it to the BlockList field.
-func (o *Fileprecreateresponse) SetBlockList(v []string) {
+// SetBlockList gets a reference to the given []int32 and assigns it to the BlockList field.
+func (o *Fileprecreateresponse) SetBlockList(v []int32) {
 	o.BlockList = &v
 }
 

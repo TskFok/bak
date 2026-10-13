@@ -29,6 +29,14 @@ type Task struct {
 	ScheduleTime    string
 	Enabled         bool
 	LastScheduledOn *time.Time
+	// PackBeforeUpload 为真时，先把本地目录打成一个 zip 再上传。
+	PackBeforeUpload bool
+	// ArchivePassword 在数据库里保存加密后的密文；交给 Execute 之前必须解密成明文。
+	ArchivePassword string
+	// ArchiveByDate 为真时，压缩包文件名带上运行当天的日期，避免覆盖更早的压缩包。
+	ArchiveByDate bool
+	// ArchiveEncryption 为 aes 或 zipcrypto。空值按 aes 处理。没有密码时不加密。
+	ArchiveEncryption string
 }
 
 type Run struct {
@@ -42,6 +50,8 @@ type Run struct {
 	SuccessCount int
 	SkipCount    int
 	FailCount    int
+	// ProgressNote 只在运行中有意义，例如「正在压缩 3/120」。结束时清空。
+	ProgressNote string
 }
 
 type FileResult struct {
@@ -57,7 +67,7 @@ type Store interface {
 	HasRunning(ctx context.Context, taskID uint) (bool, error)
 	CreateRun(ctx context.Context, run *Run) error
 	FinishRun(ctx context.Context, run Run) error
-	// UpdateRunProgress 在运行期间保存当前计数，不改变状态与结束时间。
+	// UpdateRunProgress 在运行期间保存当前计数和进度说明，不改变状态与结束时间。
 	UpdateRunProgress(ctx context.Context, run Run) error
 	LatestSuccess(ctx context.Context, taskID uint, rel, fingerprint string) (FileResult, bool, error)
 	SaveFileResult(ctx context.Context, runID, taskID uint, result FileResult) error
@@ -106,7 +116,11 @@ func StartRun(ctx context.Context, store Store, task Task, trigger string, now t
 // Execute 在 StartRun 创建的 running 记录上扫描并上传，最后 FinishRun。
 // 它不再检查 HasRunning（否则会看到自己的 running 记录）。
 // 每处理完一个文件会保存当前计数，保存失败不影响备份。
+// PackBeforeUpload 为真时改为打成一个 zip 再上传；此时 ArchivePassword 必须已是明文。
 func Execute(ctx context.Context, store Store, task Task, p provider.Provider, started Run) (Run, error) {
+	if task.PackBeforeUpload {
+		return executePacked(ctx, store, task, p, started)
+	}
 	run := &started
 	info, err := os.Stat(task.LocalDir)
 	if err != nil || !info.IsDir() {
@@ -182,6 +196,7 @@ func finishFailed(ctx context.Context, store Store, run Run, summary string) (Ru
 	run.FinishedAt = &done
 	run.Status = "failed"
 	run.ErrorSummary = summary
+	run.ProgressNote = ""
 	if err := store.FinishRun(ctx, run); err != nil {
 		return Run{}, err
 	}

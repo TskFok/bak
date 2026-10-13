@@ -19,6 +19,7 @@ import (
 	"bak/internal/backup"
 	"bak/internal/baidutoken"
 	"bak/internal/cloudacct"
+	"bak/internal/crypto"
 	"bak/internal/provider"
 	"bak/internal/provider/aliyun"
 	"bak/internal/provider/baidu"
@@ -584,13 +585,17 @@ var errTokenRefresh = errors.New("令牌刷新失败，请重新授权")
 // ---- 任务 ----
 
 type taskBody struct {
-	Name           string `json:"name"`
-	LocalDir       string `json:"localDir"`
-	Provider       string `json:"provider"`
-	CloudAccountID uint   `json:"cloudAccountId"`
-	RemoteDir      string `json:"remoteDir"`
-	ScheduleTime   string `json:"scheduleTime"`
-	Enabled        *bool  `json:"enabled"`
+	Name              string  `json:"name"`
+	LocalDir          string  `json:"localDir"`
+	Provider          string  `json:"provider"`
+	CloudAccountID    uint    `json:"cloudAccountId"`
+	RemoteDir         string  `json:"remoteDir"`
+	ScheduleTime      string  `json:"scheduleTime"`
+	Enabled           *bool   `json:"enabled"`
+	PackBeforeUpload  *bool   `json:"packBeforeUpload"`
+	ArchivePassword   *string `json:"archivePassword"`
+	ArchiveByDate     *bool   `json:"archiveByDate"`
+	ArchiveEncryption *string `json:"archiveEncryption"`
 }
 
 func localDirReadable(dir string) bool {
@@ -607,7 +612,8 @@ func localDirReadable(dir string) bool {
 }
 
 // parseTask 校验请求并生成任务，校验失败时已写出 400。
-func (a *api) parseTask(w http.ResponseWriter, req *http.Request) (backup.Task, bool) {
+// prev 不为空时，请求里省略的打包选项和密码沿用原任务，避免暂停定时时把它们清掉。
+func (a *api) parseTask(w http.ResponseWriter, req *http.Request, prev *backup.Task) (backup.Task, bool) {
 	var body taskBody
 	if !decodeBody(w, req, &body) {
 		return backup.Task{}, false
@@ -635,6 +641,28 @@ func (a *api) parseTask(w http.ResponseWriter, req *http.Request) (backup.Task, 
 	if name == "" || utf8.RuneCountInString(name) > 100 {
 		fields["name"] = "请填写 1 到 100 个字符的任务名称"
 	}
+	if body.ArchivePassword != nil && utf8.RuneCountInString(*body.ArchivePassword) > 128 {
+		fields["archivePassword"] = "压缩包密码不能超过 128 个字符"
+	}
+	enc := ""
+	byDate := false
+	if prev != nil {
+		enc = prev.ArchiveEncryption
+		byDate = prev.ArchiveByDate
+	}
+	if body.ArchiveEncryption != nil {
+		switch strings.TrimSpace(*body.ArchiveEncryption) {
+		case "", backup.ArchiveEncryptionAES:
+			enc = backup.ArchiveEncryptionAES
+		case backup.ArchiveEncryptionZipCrypto:
+			enc = backup.ArchiveEncryptionZipCrypto
+		default:
+			fields["archiveEncryption"] = "请选择 AES-256 或 ZipCrypto"
+		}
+	}
+	if body.ArchiveByDate != nil {
+		byDate = *body.ArchiveByDate
+	}
 	if len(fields) > 0 {
 		fieldErrors(w, fields)
 		return backup.Task{}, false
@@ -656,13 +684,53 @@ func (a *api) parseTask(w http.ResponseWriter, req *http.Request) (backup.Task, 
 		return backup.Task{}, false
 	}
 	enabled := true
+	if prev != nil {
+		enabled = prev.Enabled
+	}
 	if body.Enabled != nil {
 		enabled = *body.Enabled
+	}
+	pack := false
+	encPassword := ""
+	if prev != nil {
+		pack = prev.PackBeforeUpload
+		encPassword = prev.ArchivePassword
+	}
+	if body.PackBeforeUpload != nil {
+		pack = *body.PackBeforeUpload
+	}
+	if body.ArchivePassword != nil {
+		if *body.ArchivePassword == "" {
+			encPassword = ""
+		} else {
+			sealed, err := crypto.Encrypt(a.deps.JWTSecret, *body.ArchivePassword)
+			if err != nil {
+				serverError(w)
+				return backup.Task{}, false
+			}
+			encPassword = sealed
+		}
 	}
 	return backup.Task{
 		Name: name, LocalDir: localDir, CloudAccountID: accountID,
 		RemoteDir: path.Clean(remoteDir), ScheduleTime: schedule, Enabled: enabled,
+		PackBeforeUpload: pack, ArchivePassword: encPassword,
+		ArchiveByDate: byDate, ArchiveEncryption: enc,
 	}, true
+}
+
+// taskForRun 把库里的压缩包密码解密成明文。未打包或未设密码时密码为空。
+func (a *api) taskForRun(task backup.Task) (backup.Task, error) {
+	if !task.PackBeforeUpload || task.ArchivePassword == "" {
+		task.ArchivePassword = ""
+		return task, nil
+	}
+	plain, err := crypto.Decrypt(a.deps.JWTSecret, task.ArchivePassword)
+	if err != nil {
+		return backup.Task{}, err
+	}
+	task.ArchivePassword = plain
+	return task, nil
 }
 
 func (a *api) taskViews(ctx context.Context, tasks []backup.Task) ([]map[string]any, error) {
@@ -683,14 +751,18 @@ func (a *api) taskViews(ctx context.Context, tasks []backup.Task) ([]map[string]
 
 func taskView(t backup.Task, providerName string) map[string]any {
 	return map[string]any{
-		"id":             t.ID,
-		"name":           t.Name,
-		"localDir":       t.LocalDir,
-		"provider":       providerName,
-		"cloudAccountId": t.CloudAccountID,
-		"remoteDir":      t.RemoteDir,
-		"scheduleTime":   t.ScheduleTime,
-		"enabled":        t.Enabled,
+		"id":                 t.ID,
+		"name":               t.Name,
+		"localDir":           t.LocalDir,
+		"provider":           providerName,
+		"cloudAccountId":     t.CloudAccountID,
+		"remoteDir":          t.RemoteDir,
+		"scheduleTime":       t.ScheduleTime,
+		"enabled":            t.Enabled,
+		"packBeforeUpload":   t.PackBeforeUpload,
+		"hasArchivePassword": t.ArchivePassword != "",
+		"archiveByDate":      t.ArchiveByDate,
+		"archiveEncryption":  backup.NormalizeArchiveEncryption(t.ArchiveEncryption),
 	}
 }
 
@@ -722,7 +794,7 @@ func (a *api) listTasks(w http.ResponseWriter, req *http.Request) {
 }
 
 func (a *api) createTask(w http.ResponseWriter, req *http.Request) {
-	task, ok := a.parseTask(w, req)
+	task, ok := a.parseTask(w, req, nil)
 	if !ok {
 		return
 	}
@@ -753,7 +825,7 @@ func (a *api) updateTask(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "任务不存在", http.StatusNotFound)
 		return
 	}
-	task, ok := a.parseTask(w, req)
+	task, ok := a.parseTask(w, req, &old)
 	if !ok {
 		return
 	}
@@ -845,6 +917,11 @@ func (a *api) runTask(w http.ResponseWriter, req *http.Request) {
 		a.failRun(ctx, w, task, "无法连接网盘")
 		return
 	}
+	ready, err := a.taskForRun(task)
+	if err != nil {
+		a.failRun(ctx, w, task, "压缩包密码无法读取，请重新保存")
+		return
+	}
 	run, err := backup.StartRun(ctx, a.deps.Store, task, "manual", a.deps.Now())
 	if errors.Is(err, backup.ErrBusy) {
 		http.Error(w, backup.ErrBusy.Error(), http.StatusConflict)
@@ -858,7 +935,7 @@ func (a *api) runTask(w http.ResponseWriter, req *http.Request) {
 	handedOff = true
 	go func() {
 		defer a.unlock(id)
-		if _, err := backup.Execute(ctx, a.deps.Store, task, p, run); err != nil {
+		if _, err := backup.Execute(ctx, a.deps.Store, ready, p, run); err != nil {
 			log.Printf("手动备份收尾失败 task=%d run=%d: %v", task.ID, run.ID, err)
 		}
 	}()
@@ -931,7 +1008,12 @@ func (a *api) runScheduled(ctx context.Context, task backup.Task) error {
 		_, err = a.recordFailure(ctx, task, "schedule", "无法连接网盘")
 		return err
 	}
-	_, err = backup.RunTask(ctx, a.deps.Store, task, p, "schedule", a.deps.Now())
+	ready, err := a.taskForRun(task)
+	if err != nil {
+		_, err = a.recordFailure(ctx, task, "schedule", "压缩包密码无法读取，请重新保存")
+		return err
+	}
+	_, err = backup.RunTask(ctx, a.deps.Store, ready, p, "schedule", a.deps.Now())
 	return err
 }
 
@@ -949,6 +1031,7 @@ func runView(r backup.Run) map[string]any {
 		"successCount": r.SuccessCount,
 		"skipCount":    r.SkipCount,
 		"failCount":    r.FailCount,
+		"progressNote": r.ProgressNote,
 	}
 }
 

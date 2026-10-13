@@ -227,6 +227,10 @@ main:focus {
   margin-top: 0;
 }
 
+.task-row form h3 {
+  margin-top: 1rem;
+}
+
 .card-head {
   display: flex;
   align-items: center;

@@ -227,8 +227,17 @@ main:focus {
   margin-top: 0;
 }
 
-.task-row form h3 {
-  margin-top: 1rem;
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.page-head h1 {
+  margin: 0;
 }
 
 .card-head {
@@ -296,10 +305,115 @@ main:focus {
   overflow-wrap: anywhere;
 }
 
+/* ---------- 弹窗 ---------- */
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem 1rem;
+  background: rgba(31, 41, 51, 0.55);
+}
+
+.dialog {
+  width: min(100%, 40rem);
+  max-height: calc(100vh - 3rem);
+  max-height: calc(100dvh - 3rem);
+  overflow-y: auto;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1.25rem 1.25rem 1.5rem;
+  box-shadow: 0 16px 40px rgba(31, 41, 51, 0.28);
+}
+
+.dialog h2 {
+  margin: 0 0 1rem;
+  font-size: 1.25rem;
+}
+
+.dialog p {
+  overflow-wrap: anywhere;
+}
+
+.dir-path {
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--content-bg);
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.dir-list {
+  list-style: none;
+  margin: 0 0 1rem;
+  padding: 0;
+  max-height: 16rem;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.dir-entry {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 44px;
+  padding: 0.5rem 0.75rem;
+  font: inherit;
+  text-align: left;
+  color: var(--content-text);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.dir-list li:last-child .dir-entry {
+  border-bottom: 0;
+}
+
+.dir-entry:hover:not(:disabled) {
+  background: #eef1f4;
+}
+
+.dir-entry:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.dir-entry span {
+  overflow-wrap: anywhere;
+}
+
+.dir-empty {
+  padding: 0.75rem;
+  color: var(--muted);
+}
+
 /* ---------- 表单 ---------- */
 
 .field {
   margin-bottom: 1rem;
+}
+
+.field-with-action {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: stretch;
+}
+
+.field-with-action input {
+  flex: 1 1 12rem;
+  width: auto;
+  min-width: 0;
 }
 
 .field label {

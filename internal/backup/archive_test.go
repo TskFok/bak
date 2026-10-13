@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -170,6 +171,45 @@ func TestPackUnreadableFileDoesNotUpload(t *testing.T) {
 	}
 	if len(up.uploads) != 0 {
 		t.Fatalf("uploaded %v", up.uploads)
+	}
+}
+
+func TestPackSkipsUnixSocket(t *testing.T) {
+	// macOS 的 Unix 套接字路径上限约 104 字节，t.TempDir() 经常超限。
+	dir, err := os.MkdirTemp("/tmp", "baksock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	sockDir := filepath.Join(dir, "dnf", "mysql")
+	if err := os.MkdirAll(sockDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "dnf", "data.txt"), []byte("rows"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", filepath.Join(sockDir, "mysql.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	up := &captureProvider{}
+	run, err := RunTask(context.Background(), &memStore{}, Task{
+		ID: 1, Name: "n", LocalDir: dir, RemoteDir: "/bak", PackBeforeUpload: true,
+	}, up, "manual", time.Now())
+	if err != nil || run.Status != "success" || run.SuccessCount != 1 || run.ErrorSummary != "" {
+		t.Fatalf("%+v %v", run, err)
+	}
+	if len(up.uploads) != 1 {
+		t.Fatalf("uploaded %v", up.uploads)
+	}
+	got, err := zipEntries(up.body, "")
+	if err != nil || got["dnf/data.txt"] != "rows" {
+		t.Fatalf("%v %v", got, err)
+	}
+	if _, ok := got["dnf/mysql/mysql.sock"]; ok {
+		t.Fatal("socket was packed")
 	}
 }
 

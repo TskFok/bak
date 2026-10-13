@@ -118,6 +118,7 @@ func NewMuxWithRunner(deps Deps) (http.Handler, ScheduleRunner) {
 		pr.Put("/api/clouds/{provider}", a.putCloud)
 		pr.Post("/api/clouds/{provider}/test", a.testCloud)
 		pr.Post("/api/clouds/{provider}/authorize", a.authorizeCloud)
+		pr.Get("/api/dirs", a.listDirs)
 		pr.Get("/api/tasks", a.listTasks)
 		pr.Post("/api/tasks", a.createTask)
 		pr.Put("/api/tasks/{id}", a.updateTask)

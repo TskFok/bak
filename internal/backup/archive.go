@@ -97,8 +97,12 @@ func collectPackedFiles(root string) ([]packedFile, error) {
 			return nil
 		}
 		info, err := os.Stat(local)
-		if err != nil || !info.Mode().IsRegular() {
+		if err != nil {
 			return &fileReadError{rel: rel}
+		}
+		// 套接字、管道、设备文件没有可打包的内容。跳过，避免 mysql.sock 这类文件让整次备份失败。
+		if !info.Mode().IsRegular() {
+			return nil
 		}
 		files = append(files, packedFile{
 			rel:   rel,
@@ -188,7 +192,8 @@ func writeArchiveEntries(zw *zip.Writer, files []packedFile, password, enc strin
 
 // executePacked 把整个本地目录打成一个 zip 后上传。
 // 目录内容、任务配置和密码都没变时跳过，不重新打包。
-// 有文件读不出来时整次失败，避免上传缺文件的压缩包。
+// 普通文件读不出来时整次失败，避免上传缺文件的压缩包。
+// 套接字等非普通文件在收集阶段跳过。
 func executePacked(ctx context.Context, store Store, task Task, p provider.Provider, started Run) (Run, error) {
 	run := &started
 	finish := func() (Run, error) {

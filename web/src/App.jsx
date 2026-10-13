@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ApiError, request, setUnauthorizedHandler } from "./api.js";
 import { dialogKeyAction, dialogLayerDepth, isTopDialogLayer, popDialogLayer, pushDialogLayer } from "./dialog.js";
-import { dirsQuery } from "./dirs.js";
+import { dirBaseName, dirsQuery, forgetDir, readRecentDirs, recentDirUnreadable, rememberDir, writeRecentDirs } from "./dirs.js";
 import { PACK_UPLOAD_NOTE, parsePackProgress } from "./packProgress.js";
 
 const POLL_MS = 3000;
@@ -674,11 +674,22 @@ function packSummary(task) {
   return task.archiveByDate ? `打包后备份，${enc}，按日期保留` : `打包后备份，${enc}`;
 }
 
+function storedRecentDirs() {
+  try {
+    return readRecentDirs(localStorage);
+  } catch {
+    return [];
+  }
+}
+
 function DirPicker({ initialPath, onSelect, onCancel }) {
   const titleId = useId();
+  const pathId = useId();
   const [listing, setListing] = useState(null);
+  const [pathDraft, setPathDraft] = useState(initialPath || "");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [recent, setRecent] = useState(storedRecentDirs);
   const seq = useRef(0);
 
   const load = useCallback(async (next, fallback) => {
@@ -686,18 +697,31 @@ function DirPicker({ initialPath, onSelect, onCancel }) {
     seq.current = ticket;
     setLoading(true);
     setError("");
+    setPathDraft(typeof next === "string" ? next.trim() : "");
     const apply = (data) => {
       if (ticket !== seq.current) return;
       setListing(data);
+      setPathDraft(data.path || "");
       setError("");
     };
     const fail = (err) => {
       if (ticket !== seq.current) return;
       setError(errorText(err));
     };
+    const drop = (attempted) => {
+      if (ticket !== seq.current) return;
+      const trimmed = (attempted || "").trim();
+      if (!trimmed) return;
+      setRecent((prev) => {
+        const updated = forgetDir(prev, trimmed);
+        if (updated.length !== prev.length) writeRecentDirs(localStorage, updated);
+        return updated;
+      });
+    };
     try {
       apply(await request(dirsQuery(next)));
     } catch (err) {
+      if (recentDirUnreadable(err.status)) drop(next);
       if (fallback && next) {
         try {
           apply(await request(dirsQuery("")));
@@ -717,16 +741,60 @@ function DirPicker({ initialPath, onSelect, onCancel }) {
     load(initialPath, true);
   }, [initialPath, load]);
 
+  const recentChoices = recent.filter((path) => path !== listing?.path);
+
+  function jump(event) {
+    event.preventDefault();
+    load(pathDraft, false);
+  }
+
+  function choose() {
+    const saved = rememberDir(recent, listing.path);
+    writeRecentDirs(localStorage, saved);
+    onSelect(listing.path);
+  }
+
   return (
     <Dialog titleId={titleId} onClose={onCancel}>
       <h2 id={titleId}>选择本地目录</h2>
-      {listing && <p className="dir-path">{listing.path}</p>}
+      <form onSubmit={jump}>
+        <div className="field dir-jump">
+          <label htmlFor={pathId}>路径</label>
+          <div className="field-with-action">
+            <input id={pathId} type="text" value={pathDraft} autoComplete="off" spellCheck={false} onChange={(e) => setPathDraft(e.target.value)} />
+            <button className="btn" type="submit" disabled={loading}>
+              前往
+            </button>
+          </div>
+        </div>
+      </form>
       {loading && <p role="status">正在加载…</p>}
       {error && (
         <p className="message message-error" role="alert">
           <Icon name="alert" size={18} />
           <span>{error}</span>
         </p>
+      )}
+      {recentChoices.length > 0 && (
+        <div className="dir-recent">
+          <h3>最近使用</h3>
+          <ul className="dir-list" aria-label="最近使用">
+            {recentChoices.map((path) => {
+              const name = dirBaseName(path);
+              return (
+                <li key={path}>
+                  <button className="dir-entry" type="button" onClick={() => load(path, false)} disabled={loading}>
+                    <Icon name="folder" size={18} />
+                    <span>
+                      {name || path}
+                      {name && name !== path && <span className="dir-recent-path">{path}</span>}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       )}
       {listing && (
         <ul className="dir-list" aria-label="子目录">
@@ -749,7 +817,7 @@ function DirPicker({ initialPath, onSelect, onCancel }) {
         </ul>
       )}
       <div className="btn-row">
-        <button className="btn btn-primary" type="button" disabled={!listing || loading} onClick={() => onSelect(listing.path)}>
+        <button className="btn btn-primary" type="button" disabled={!listing || loading} onClick={choose}>
           选择此目录
         </button>
         <button className="btn" type="button" onClick={onCancel}>

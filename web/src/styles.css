@@ -339,13 +339,25 @@ main:focus {
   overflow-wrap: anywhere;
 }
 
-.dir-path {
-  margin: 0 0 0.75rem;
-  padding: 0.5rem 0.75rem;
-  background: var(--content-bg);
-  border-radius: 6px;
-  overflow-wrap: anywhere;
-  font-weight: 600;
+.dir-jump {
+  margin-bottom: 0.75rem;
+}
+
+.dir-recent h3 {
+  margin: 0 0 0.35rem;
+  font-size: 0.95rem;
+}
+
+.dir-recent .dir-list {
+  max-height: 8rem;
+  margin-bottom: 0.75rem;
+}
+
+.dir-recent-path {
+  display: block;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 400;
 }
 
 .dir-list {
@@ -388,7 +400,10 @@ main:focus {
   cursor: not-allowed;
 }
 
-.dir-entry span {
+.dir-entry > span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 

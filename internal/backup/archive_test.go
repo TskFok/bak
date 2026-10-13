@@ -173,6 +173,29 @@ func TestPackUnreadableFileDoesNotUpload(t *testing.T) {
 	}
 }
 
+func TestPackUploadFailureRemovesTempZip(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hold := &holdZip{}
+	store := &removeCheckStore{path: &hold.path}
+	task := Task{ID: 1, Name: "n", LocalDir: dir, RemoteDir: "/bak", PackBeforeUpload: true}
+	run, err := RunTask(context.Background(), store, task, hold, "manual", time.Now())
+	if err != nil || run.Status != "failed" || run.FailCount != 1 || run.ErrorSummary != "" {
+		t.Fatalf("%+v %v", run, err)
+	}
+	if hold.path == "" {
+		t.Fatal("upload was not attempted")
+	}
+	if !store.removedBeforeSave {
+		t.Fatal("temp zip still present when recording the upload failure")
+	}
+	if _, err := os.Stat(hold.path); !os.IsNotExist(err) {
+		t.Fatalf("temp zip remains after run: %v", err)
+	}
+}
+
 func TestPackUploadAndDirFailures(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("x"), 0o644); err != nil {
@@ -274,6 +297,32 @@ func (c *captureProvider) Upload(ctx context.Context, localPath, remotePath stri
 	}
 	c.body = append([]byte(nil), b...)
 	return c.fakeProvider.Upload(ctx, localPath, remotePath)
+}
+
+type holdZip struct{ path string }
+
+func (holdZip) Test(ctx context.Context) error                        { return nil }
+func (holdZip) EnsureDir(ctx context.Context, remoteDir string) error { return nil }
+func (h *holdZip) Upload(ctx context.Context, localPath, remotePath string) error {
+	h.path = localPath
+	if _, err := os.Stat(localPath); err != nil {
+		return err
+	}
+	return errors.New("网盘拒绝")
+}
+
+type removeCheckStore struct {
+	memStore
+	path              *string
+	removedBeforeSave bool
+}
+
+func (s *removeCheckStore) SaveFileResult(ctx context.Context, runID, taskID uint, result FileResult) error {
+	if result.Status == "failed" && s.path != nil && *s.path != "" {
+		_, err := os.Stat(*s.path)
+		s.removedBeforeSave = os.IsNotExist(err)
+	}
+	return s.memStore.SaveFileResult(ctx, runID, taskID, result)
 }
 
 type errUpload struct{}

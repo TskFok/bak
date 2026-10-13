@@ -266,6 +266,8 @@ func executePacked(ctx context.Context, store Store, task Task, p provider.Provi
 	note("正在上传压缩包")
 	remote := path.Join(task.RemoteDir, rel)
 	if upErr := p.Upload(ctx, tmpName, remote); upErr != nil {
+		// 先删临时包再写失败记录。收尾如果卡住，压缩包也不会继续占着磁盘。
+		_ = os.Remove(tmpName)
 		run.FailCount++
 		record(FileResult{
 			RelativePath: rel, Status: "failed", Error: upErr.Error(),

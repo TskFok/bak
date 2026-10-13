@@ -3,6 +3,7 @@ package baidutoken
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"time"
 
@@ -10,11 +11,15 @@ import (
 	"BaiduYunPanBak/internal/cloudacct"
 	"BaiduYunPanBak/internal/store"
 	"BaiduYunPanBak/model"
+	"BaiduYunPanBak/tool/openapi"
 )
 
 var errNoDB = errors.New("数据库未初始化")
 
 var tokenReader = defaultTokenReader
+
+// tokenRefresher 用 refresh_token 向百度换新令牌。测试里替换，避免访问真实接口。
+var tokenRefresher = defaultTokenRefresher
 
 func defaultTokenReader() (model.Token, error) {
 	if global.DataBase == nil {
@@ -139,6 +144,7 @@ func expiresInSeconds(exp time.Time, known bool, now time.Time) int32 {
 }
 
 // Sync 读取 token 表并与面板里的百度密钥对齐，把落后的一行写回 token 表。
+// 两边都已过期时先向百度刷新，不再沿用旧令牌。
 // 面板密钥有变化时 changed 为 true，由调用方保存。数据库未初始化时原样返回。
 func Sync(cloud cloudacct.Secrets) (cloudacct.Secrets, bool, error) {
 	row, err := tokenReader()
@@ -150,6 +156,19 @@ func Sync(cloud cloudacct.Secrets) (cloudacct.Secrets, bool, error) {
 	}
 	now := time.Now()
 	nextCloud, nextRow, cloudChanged, rowChanged := Reconcile(cloud, row, now)
+	if bothSidesExpired(cloud, row, now) {
+		refreshed, err := tokenRefresher(nextCloud)
+		if err != nil {
+			return cloud, false, err
+		}
+		nextCloud.AccessToken = refreshed.AccessToken
+		nextCloud.RefreshToken = refreshed.RefreshToken
+		nextCloud.ExpiresAt = refreshed.ExpiresAt
+		nextRow.AccessToken = refreshed.AccessToken
+		nextRow.RefreshToken = refreshed.RefreshToken
+		nextRow.ExpiresIn = expiresInSeconds(refreshed.ExpiresAt, !refreshed.ExpiresAt.IsZero(), now)
+		cloudChanged, rowChanged = true, true
+	}
 	if rowChanged {
 		if err := tokenWriter(nextRow); err != nil {
 			return cloud, false, err
@@ -161,6 +180,53 @@ func Sync(cloud cloudacct.Secrets) (cloudacct.Secrets, bool, error) {
 		}
 	}
 	return nextCloud, cloudChanged, nil
+}
+
+// bothSidesExpired 表示面板账号和 token 表里都有令牌，且两份都已过期。
+func bothSidesExpired(cloud cloudacct.Secrets, row model.Token, now time.Time) bool {
+	cc, rc := cloudCred(cloud), rowCred(row)
+	if cc.access == "" || rc.access == "" || !cc.known || !rc.known {
+		return false
+	}
+	return !cc.exp.After(now) && !rc.exp.After(now)
+}
+
+func defaultTokenRefresher(s cloudacct.Secrets) (cloudacct.Secrets, error) {
+	clientID := s.ClientID
+	clientSecret := s.ClientSecret
+	if clientID == "" {
+		clientID = global.BaiduYunClientId
+	}
+	if clientSecret == "" {
+		clientSecret = global.BaiduYunClientSecret
+	}
+	if s.RefreshToken == "" || clientID == "" || clientSecret == "" {
+		return s, errors.New("无法刷新百度令牌：缺少 refresh_token 或应用凭据")
+	}
+	client := openapi.NewAPIClient(openapi.NewConfiguration())
+	resp, _, err := client.AuthApi.OauthTokenRefreshToken(context.Background()).RefreshToken(s.RefreshToken).ClientId(clientID).ClientSecret(clientSecret).Execute()
+	if err != nil || resp.GetAccessToken() == "" {
+		return s, refreshFailure(err)
+	}
+	s.AccessToken = resp.GetAccessToken()
+	if rt := resp.GetRefreshToken(); rt != "" {
+		s.RefreshToken = rt
+	}
+	s.ClientID = clientID
+	s.ClientSecret = clientSecret
+	if resp.GetExpiresIn() > 0 {
+		s.ExpiresAt = time.Now().Add(time.Duration(resp.GetExpiresIn()) * time.Second)
+	}
+	return s, nil
+}
+
+// refreshFailure 只保留百度返回的状态码。传输错误里常带有完整请求地址，其中包含 refresh_token 和应用密钥。
+func refreshFailure(err error) error {
+	var apiErr openapi.GenericOpenAPIError
+	if err != nil && errors.As(err, &apiErr) && apiErr.Error() != "" {
+		return fmt.Errorf("刷新百度令牌失败: %s", apiErr.Error())
+	}
+	return errors.New("刷新百度令牌失败")
 }
 
 func cacheTTL(s cloudacct.Secrets, now time.Time) int {

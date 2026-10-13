@@ -1,6 +1,9 @@
 package store
 
 import (
+	"fmt"
+	"log"
+	"strings"
 	"time"
 
 	"BaiduYunPanBak/global"
@@ -8,6 +11,9 @@ import (
 
 	"gorm.io/gorm"
 )
+
+// uploadSizeLogf 记录 upload_history.size 迁移结果。测试里替换。
+var uploadSizeLogf = log.Printf
 
 // touch 补全 BaseModel 的时间列。BaseModel 使用 LocalTime，GORM 不会自动维护。
 func touch(b *model.BaseModel) {
@@ -105,9 +111,69 @@ func (m *backupFileResult) BeforeCreate(*gorm.DB) error { touch(&m.BaseModel); r
 
 // AutoMigrate 创建或补齐本应用使用的表。已有表只做结构对齐，不删除数据。
 // token、upload_history 使用单数表名，与数据库 NamingStrategy 一致。
+// 迁移前后会记录 upload_history.size 的类型，便于核对 int 是否已扩成 bigint。
 func AutoMigrate(db *gorm.DB) error {
-	return db.AutoMigrate(
+	before := uploadHistorySizeType(db)
+	err := db.AutoMigrate(
 		&User{}, &CloudAccount{}, &backupTask{}, &backupRun{}, &backupFileResult{},
 		&model.Token{}, &model.UploadHistory{},
 	)
+	after := uploadHistorySizeType(db)
+	if msg := uploadSizeMigrationMessage(before, after); msg != "" {
+		uploadSizeLogf("%s", msg)
+	}
+	return err
+}
+
+func uploadSizeMigrationMessage(before, after string) string {
+	switch {
+	case before == "" && after == "":
+		return ""
+	case before == "":
+		return fmt.Sprintf("upload_history.size 迁移结果: 新建为 %s", after)
+	case strings.EqualFold(before, after):
+		return fmt.Sprintf("upload_history.size 迁移结果: 保持 %s", after)
+	default:
+		return fmt.Sprintf("upload_history.size 迁移结果: %s -> %s", before, after)
+	}
+}
+
+func uploadHistorySizeType(db *gorm.DB) string {
+	if db == nil || db.Dialector == nil {
+		return ""
+	}
+	table := uploadHistoryTable(db)
+	if table == "" {
+		return ""
+	}
+	if db.Dialector.Name() == "mysql" {
+		var dataType string
+		q := db.Raw(`SELECT DATA_TYPE FROM information_schema.COLUMNS
+			WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = 'size'`, table).Scan(&dataType)
+		if q.Error != nil {
+			return ""
+		}
+		return strings.ToLower(dataType)
+	}
+	if !db.Migrator().HasTable(table) {
+		return ""
+	}
+	cols, err := db.Migrator().ColumnTypes(table)
+	if err != nil {
+		return ""
+	}
+	for _, c := range cols {
+		if strings.EqualFold(c.Name(), "size") {
+			return strings.ToLower(c.DatabaseTypeName())
+		}
+	}
+	return ""
+}
+
+func uploadHistoryTable(db *gorm.DB) string {
+	stmt := &gorm.Statement{DB: db}
+	if err := stmt.Parse(&model.UploadHistory{}); err != nil || stmt.Schema == nil {
+		return ""
+	}
+	return stmt.Schema.Table
 }

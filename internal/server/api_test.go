@@ -757,6 +757,115 @@ func TestManualRunReturns202WhileWalking(t *testing.T) {
 	}
 }
 
+func TestListCloudsReturnsBaiduSyncFailure(t *testing.T) {
+	env := newAPIEnv(t)
+	env.h = NewMux(Deps{
+		AuthDeps:  AuthDeps{Users: &memAuthUsers{}, Sessions: &memSessions{}, SessionTTL: time.Hour},
+		Store:     env.store,
+		JWTSecret: testJWTSecret,
+		Providers: func(name string, s cloudacct.Secrets) (provider.Provider, error) { return env.prov, nil },
+		Tokens:    env.tokens,
+		SyncBaidu: func(s cloudacct.Secrets) (cloudacct.Secrets, bool, error) {
+			return s, false, errors.New("refresh rejected")
+		},
+	})
+	rec := httptest.NewRecorder()
+	env.h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/setup",
+		strings.NewReader(`{"username":"me2","password":"password1","confirm":"password1"}`)))
+	if rec.Code != 200 {
+		t.Fatalf("setup %d %s", rec.Code, rec.Body.String())
+	}
+	env.cookie = rec.Result().Cookies()[0]
+
+	blob, err := cloudacct.Seal(testJWTSecret, cloudacct.Secrets{
+		ClientID: "cid", DeviceID: "dev", AccessToken: "old", RefreshToken: "rt",
+		ExpiresAt: time.Now().Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := env.store.UpsertCloud(context.Background(), &store.CloudAccount{
+		Provider: "baidu", DisplayName: "百度网盘", SecretBlob: blob, Status: "connected",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = env.do(http.MethodGet, "/api/clouds", "")
+	if rec.Code != 200 {
+		t.Fatalf("list %d %s", rec.Code, rec.Body.String())
+	}
+	var clouds []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &clouds); err != nil {
+		t.Fatal(err)
+	}
+	var baidu map[string]any
+	for _, c := range clouds {
+		if c["provider"] == "baidu" {
+			baidu = c
+		}
+	}
+	if baidu == nil {
+		t.Fatalf("missing baidu: %s", rec.Body.String())
+	}
+	if baidu["status"] != "error" {
+		t.Fatalf("status = %v body %s", baidu["status"], rec.Body.String())
+	}
+	last, _ := baidu["lastError"].(string)
+	if !strings.Contains(last, "refresh rejected") {
+		t.Fatalf("lastError = %q", last)
+	}
+	cfg, _ := baidu["config"].(map[string]any)
+	if cfg["clientId"] != "cid" || cfg["deviceId"] != "dev" {
+		t.Fatalf("config %+v", cfg)
+	}
+	var stored store.CloudAccount
+	for _, c := range env.store.clouds {
+		if c.Provider == "baidu" {
+			stored = c
+		}
+	}
+	if stored.Status != "error" || !strings.Contains(stored.LastError, "refresh rejected") {
+		t.Fatalf("stored %+v", stored)
+	}
+}
+
+func TestListCloudsClearsBaiduSyncErrorAfterSuccess(t *testing.T) {
+	env := newAPIEnv(t)
+	env.h = NewMux(Deps{
+		AuthDeps:  AuthDeps{Users: &memAuthUsers{}, Sessions: &memSessions{}, SessionTTL: time.Hour},
+		Store:     env.store,
+		JWTSecret: testJWTSecret,
+		Providers: func(name string, s cloudacct.Secrets) (provider.Provider, error) { return env.prov, nil },
+		Tokens:    env.tokens,
+		SyncBaidu: func(s cloudacct.Secrets) (cloudacct.Secrets, bool, error) {
+			return s, false, nil
+		},
+	})
+	rec := httptest.NewRecorder()
+	env.h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/setup",
+		strings.NewReader(`{"username":"me3","password":"password1","confirm":"password1"}`)))
+	if rec.Code != 200 {
+		t.Fatalf("setup %d %s", rec.Code, rec.Body.String())
+	}
+	env.cookie = rec.Result().Cookies()[0]
+
+	blob, err := cloudacct.Seal(testJWTSecret, cloudacct.Secrets{ClientID: "cid", AccessToken: "ok", RefreshToken: "rt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := env.store.UpsertCloud(context.Background(), &store.CloudAccount{
+		Provider: "baidu", DisplayName: "百度网盘", SecretBlob: blob,
+		Status: "error", LastError: "同步百度令牌失败: refresh rejected",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec = env.do(http.MethodGet, "/api/clouds", "")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"connected"`) || strings.Contains(rec.Body.String(), "refresh rejected") {
+		t.Fatalf("list %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func (e *apiEnv) waitRunOnce(t *testing.T, id uint) map[string]any {
 	t.Helper()
 	rec := e.do(http.MethodGet, "/api/runs/"+strconv.Itoa(int(id)), "")

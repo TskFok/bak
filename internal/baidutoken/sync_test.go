@@ -1,6 +1,8 @@
 package baidutoken
 
 import (
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -219,6 +221,139 @@ func TestCurrentAlignsTokenTableAndCloudAccount(t *testing.T) {
 	}
 	if stored.AccessToken != "from-cloud" || stored.RefreshToken != "r-cloud" {
 		t.Fatalf("%+v", stored)
+	}
+}
+
+func TestSyncRefreshesWhenBothSidesExpired(t *testing.T) {
+	now := time.Now()
+	rowUpdated := model.LocalTime(now.Add(-2 * time.Hour))
+	row := model.Token{
+		Id: 4, AccessToken: "a-row", RefreshToken: "r-row", ExpiresIn: 3600,
+		BaseModel: model.BaseModel{UpdatedAt: &rowUpdated},
+	}
+	cloud := cloudacct.Secrets{
+		ClientID: "cid", ClientSecret: "sec", DeviceID: "dev",
+		AccessToken: "a-cloud", RefreshToken: "r-cloud",
+		ExpiresAt: now.Add(-time.Hour),
+	}
+	prevReader, prevWriter, prevCache, prevRefresh := tokenReader, tokenWriter, cacheSetter, tokenRefresher
+	var written model.Token
+	var cached string
+	tokenReader = func() (model.Token, error) { return row, nil }
+	tokenWriter = func(tk model.Token) error { written = tk; return nil }
+	cacheSetter = func(key, value string, ttl int) { cached = value }
+	tokenRefresher = func(s cloudacct.Secrets) (cloudacct.Secrets, error) {
+		if s.RefreshToken != "r-cloud" || s.ClientID != "cid" || s.DeviceID != "dev" {
+			t.Fatalf("refresh input %+v", s)
+		}
+		s.AccessToken = "a-new"
+		s.RefreshToken = "r-new"
+		s.ExpiresAt = now.Add(2 * time.Hour)
+		return s, nil
+	}
+	t.Cleanup(func() {
+		tokenReader, tokenWriter, cacheSetter, tokenRefresher = prevReader, prevWriter, prevCache, prevRefresh
+	})
+
+	next, changed, err := Sync(cloud)
+	if err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	if next.AccessToken != "a-new" || next.RefreshToken != "r-new" || next.ClientID != "cid" || next.DeviceID != "dev" {
+		t.Fatalf("%+v", next)
+	}
+	if !next.ExpiresAt.After(now) {
+		t.Fatal(next.ExpiresAt)
+	}
+	if written.AccessToken != "a-new" || written.RefreshToken != "r-new" || written.ExpiresIn <= 0 {
+		t.Fatalf("%+v", written)
+	}
+	if cached != "a-new" {
+		t.Fatalf("cache = %q", cached)
+	}
+}
+
+func TestSyncLeavesValidTokenUnrefreshed(t *testing.T) {
+	now := time.Now()
+	rowUpdated := model.LocalTime(now.Add(-2 * time.Hour))
+	row := model.Token{
+		Id: 4, AccessToken: "a-row", RefreshToken: "r-row", ExpiresIn: 3600,
+		BaseModel: model.BaseModel{UpdatedAt: &rowUpdated},
+	}
+	cloud := cloudacct.Secrets{
+		ClientID: "cid", DeviceID: "dev",
+		AccessToken: "a-cloud", RefreshToken: "r-cloud",
+		ExpiresAt: now.Add(2 * time.Hour),
+	}
+	prevReader, prevWriter, prevRefresh := tokenReader, tokenWriter, tokenRefresher
+	tokenReader = func() (model.Token, error) { return row, nil }
+	tokenWriter = func(tk model.Token) error { return nil }
+	tokenRefresher = func(s cloudacct.Secrets) (cloudacct.Secrets, error) {
+		t.Fatal("still-valid token was refreshed")
+		return s, nil
+	}
+	t.Cleanup(func() {
+		tokenReader, tokenWriter, tokenRefresher = prevReader, prevWriter, prevRefresh
+	})
+
+	next, _, err := Sync(cloud)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.AccessToken != "a-cloud" || next.DeviceID != "dev" {
+		t.Fatalf("%+v", next)
+	}
+}
+
+func TestSyncRefreshFailureDoesNotKeepExpiredToken(t *testing.T) {
+	now := time.Now()
+	rowUpdated := model.LocalTime(now.Add(-2 * time.Hour))
+	row := model.Token{
+		Id: 4, AccessToken: "a-row", RefreshToken: "r-row", ExpiresIn: 3600,
+		BaseModel: model.BaseModel{UpdatedAt: &rowUpdated},
+	}
+	cloud := cloudacct.Secrets{
+		ClientID: "cid", AccessToken: "a-cloud", RefreshToken: "r-cloud",
+		ExpiresAt: now.Add(-time.Hour),
+	}
+	prevReader, prevWriter, prevRefresh := tokenReader, tokenWriter, tokenRefresher
+	wrote := false
+	tokenReader = func() (model.Token, error) { return row, nil }
+	tokenWriter = func(tk model.Token) error { wrote = true; return nil }
+	tokenRefresher = func(s cloudacct.Secrets) (cloudacct.Secrets, error) {
+		return s, errors.New("refresh rejected")
+	}
+	t.Cleanup(func() {
+		tokenReader, tokenWriter, tokenRefresher = prevReader, prevWriter, prevRefresh
+	})
+
+	next, changed, err := Sync(cloud)
+	if err == nil || changed || wrote {
+		t.Fatalf("changed=%v wrote=%v err=%v", changed, wrote, err)
+	}
+	if next.AccessToken != "a-cloud" {
+		t.Fatalf("%+v", next)
+	}
+	if !strings.Contains(err.Error(), "refresh rejected") {
+		t.Fatal(err)
+	}
+}
+
+func TestDefaultTokenRefresherRequiresCredentials(t *testing.T) {
+	_, err := defaultTokenRefresher(cloudacct.Secrets{AccessToken: "a-old", RefreshToken: ""})
+	if err == nil || !strings.Contains(err.Error(), "缺少") {
+		t.Fatal(err)
+	}
+}
+
+func TestRefreshFailureHidesRequestURL(t *testing.T) {
+	secret := "client_secret=super-secret&refresh_token=rt-value"
+	err := refreshFailure(errors.New("Get \"https://openapi.baidu.com/oauth/2.0/token?" + secret + "\": refused"))
+	if err == nil || strings.Contains(err.Error(), "super-secret") || strings.Contains(err.Error(), "rt-value") {
+		t.Fatal(err)
+	}
+	if err.Error() != "刷新百度令牌失败" {
+		t.Fatal(err)
 	}
 }
 

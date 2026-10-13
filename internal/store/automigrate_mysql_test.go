@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -82,8 +84,18 @@ func TestMySQLAutoMigrateWidensUploadSize(t *testing.T) {
 	)`).Error; err != nil {
 		t.Fatal(err)
 	}
+	var lines []string
+	prevLog := uploadSizeLogf
+	uploadSizeLogf = func(format string, args ...any) {
+		lines = append(lines, fmt.Sprintf(format, args...))
+	}
+	t.Cleanup(func() { uploadSizeLogf = prevLog })
+
 	if err := AutoMigrate(db); err != nil {
 		t.Fatal(err)
+	}
+	if joined := strings.Join(lines, "\n"); !strings.Contains(joined, "int -> bigint") {
+		t.Fatalf("migration log = %q", joined)
 	}
 	var dataType string
 	if err := db.Raw(`SELECT DATA_TYPE FROM information_schema.COLUMNS

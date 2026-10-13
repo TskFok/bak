@@ -1,7 +1,9 @@
 package store
 
 import (
+	"fmt"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,5 +75,54 @@ func TestAutoMigrateCreatesMissingLegacyTables(t *testing.T) {
 	}
 	if gotHist.Size != huge {
 		t.Fatalf("size = %d", gotHist.Size)
+	}
+}
+
+func TestUploadSizeMigrationMessage(t *testing.T) {
+	if got := uploadSizeMigrationMessage("int", "bigint"); got != "upload_history.size 迁移结果: int -> bigint" {
+		t.Fatalf("%q", got)
+	}
+	if got := uploadSizeMigrationMessage("bigint", "bigint"); !strings.Contains(got, "保持") || !strings.Contains(got, "bigint") {
+		t.Fatalf("%q", got)
+	}
+	if got := uploadSizeMigrationMessage("", "bigint"); !strings.Contains(got, "新建") || !strings.Contains(got, "bigint") {
+		t.Fatalf("%q", got)
+	}
+}
+
+func TestAutoMigrateLogsExistingUploadSizeWiden(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:size-log?mode=memory&cache=shared"), &gorm.Config{
+		NamingStrategy: schema.NamingStrategy{SingularTable: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE upload_history (
+		id integer PRIMARY KEY,
+		path text NOT NULL,
+		size int NOT NULL,
+		fs_id text NOT NULL,
+		md5 text NOT NULL,
+		errno int NOT NULL,
+		created_at datetime,
+		updated_at datetime
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	prev := uploadSizeLogf
+	uploadSizeLogf = func(format string, args ...any) {
+		lines = append(lines, fmt.Sprintf(format, args...))
+	}
+	t.Cleanup(func() { uploadSizeLogf = prev })
+
+	if err := AutoMigrate(db); err != nil {
+		t.Fatal(err)
+	}
+	if len(lines) != 1 || !strings.Contains(lines[0], "upload_history.size 迁移结果:") {
+		t.Fatalf("%q", lines)
+	}
+	if strings.Contains(lines[0], "新建") {
+		t.Fatalf("existing column reported as created: %s", lines[0])
 	}
 }

@@ -82,6 +82,8 @@ type Deps struct {
 	Providers ProviderFactory
 	Tokens    TokenService
 	Now       func() time.Time
+	// SyncBaidu 对齐面板和 token 表里的百度令牌。为空时使用 baidutoken.Sync。
+	SyncBaidu func(cloudacct.Secrets) (cloudacct.Secrets, bool, error)
 }
 
 // NewMux 返回完整的 HTTP 处理器：公开的 setup/login 路由和需要会话的业务路由。
@@ -216,6 +218,15 @@ func (a *api) saveCloud(ctx context.Context, acct store.CloudAccount) error {
 	return a.deps.Store.UpsertCloud(ctx, &acct)
 }
 
+const baiduSyncErrorPrefix = "同步百度令牌失败: "
+
+func (a *api) syncBaidu(s cloudacct.Secrets) (cloudacct.Secrets, bool, error) {
+	if a.deps.SyncBaidu != nil {
+		return a.deps.SyncBaidu(s)
+	}
+	return baidutoken.Sync(s)
+}
+
 func (a *api) openSecrets(acct *store.CloudAccount) (cloudacct.Secrets, error) {
 	var s cloudacct.Secrets
 	if acct.SecretBlob != "" {
@@ -228,17 +239,20 @@ func (a *api) openSecrets(acct *store.CloudAccount) (cloudacct.Secrets, error) {
 	if acct.Provider != "baidu" {
 		return s, nil
 	}
-	next, changed, err := baidutoken.Sync(s)
+	next, changed, err := a.syncBaidu(s)
 	if err != nil {
-		log.Printf("同步百度令牌失败: %v", err)
+		a.markBaiduSyncError(acct, err)
 		return s, nil
+	}
+	if a.clearBaiduSyncError(acct) {
+		changed = true
 	}
 	if !changed {
 		return next, nil
 	}
 	blob, err := cloudacct.Seal(a.deps.JWTSecret, next)
 	if err != nil {
-		log.Printf("同步百度令牌失败: %v", err)
+		a.markBaiduSyncError(acct, err)
 		return s, nil
 	}
 	acct.SecretBlob = blob
@@ -246,15 +260,44 @@ func (a *api) openSecrets(acct *store.CloudAccount) (cloudacct.Secrets, error) {
 		acct.Status = "connected"
 	}
 	if err := a.saveCloud(context.Background(), *acct); err != nil {
-		log.Printf("同步百度令牌失败: %v", err)
+		a.markBaiduSyncError(acct, err)
+		return next, nil
 	}
 	return next, nil
+}
+
+func (a *api) markBaiduSyncError(acct *store.CloudAccount, err error) {
+	acct.Status = "error"
+	acct.LastError = baiduSyncErrorPrefix + shortError(err)
+	if saveErr := a.saveCloud(context.Background(), *acct); saveErr != nil {
+		log.Printf("%s%v", baiduSyncErrorPrefix, saveErr)
+	}
+}
+
+func (a *api) clearBaiduSyncError(acct *store.CloudAccount) bool {
+	if !strings.HasPrefix(acct.LastError, baiduSyncErrorPrefix) {
+		return false
+	}
+	acct.LastError = ""
+	if acct.Status == "error" {
+		acct.Status = "connected"
+	}
+	return true
 }
 
 // cloudView 返回对外展示的网盘信息，只含非敏感配置。
 func (a *api) cloudView(name string, acct store.CloudAccount, found bool) map[string]any {
 	status, lastErr := "disconnected", ""
+	cfg := map[string]string{}
 	if found {
+		if s, err := a.openSecrets(&acct); err == nil {
+			switch name {
+			case "webdav":
+				cfg["url"], cfg["username"] = s.URL, s.Username
+			default:
+				cfg["clientId"], cfg["deviceId"] = s.ClientID, s.DeviceID
+			}
+		}
 		status, lastErr = acct.Status, acct.LastError
 		if status == "" {
 			status = "disconnected"
@@ -267,17 +310,6 @@ func (a *api) cloudView(name string, acct store.CloudAccount, found bool) map[st
 		"lastError":   pv["lastError"],
 		"displayName": displayNames[name],
 		"id":          acct.ID,
-	}
-	cfg := map[string]string{}
-	if found {
-		if s, err := a.openSecrets(&acct); err == nil {
-			switch name {
-			case "webdav":
-				cfg["url"], cfg["username"] = s.URL, s.Username
-			default:
-				cfg["clientId"], cfg["deviceId"] = s.ClientID, s.DeviceID
-			}
-		}
 	}
 	view["config"] = cfg
 	return view

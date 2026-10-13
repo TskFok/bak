@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"BaiduYunPanBak/model"
+	"bak/model"
 )
 
 // DefaultChunkSize 是百度网盘分片上传的默认分片大小（4MB）。

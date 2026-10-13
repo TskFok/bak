@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"BaiduYunPanBak/internal/auth"
+	"bak/internal/auth"
 
 	"github.com/go-chi/chi/v5"
 )

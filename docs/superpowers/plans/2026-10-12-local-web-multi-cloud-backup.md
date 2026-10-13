@@ -391,7 +391,7 @@ import (
 	"testing"
 	"time"
 
-	"BaiduYunPanBak/internal/auth"
+	"bak/internal/auth"
 )
 
 type memSessions struct{ m map[string]uint }
@@ -550,7 +550,7 @@ import (
 	"net/http"
 	"time"
 
-	"BaiduYunPanBak/internal/auth"
+	"bak/internal/auth"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -993,7 +993,7 @@ import (
 	"net/url"
 	"time"
 
-	"BaiduYunPanBak/internal/crypto"
+	"bak/internal/crypto"
 )
 
 type Secrets struct {
@@ -1228,7 +1228,7 @@ import (
 	"strconv"
 	"time"
 
-	"BaiduYunPanBak/internal/provider"
+	"bak/internal/provider"
 )
 
 var ErrBusy = errors.New("该任务正在备份")
@@ -1593,8 +1593,8 @@ import (
 	"testing"
 	"time"
 
-	"BaiduYunPanBak/internal/auth"
-	"BaiduYunPanBak/internal/backup"
+	"bak/internal/auth"
+	"bak/internal/backup"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
@@ -1983,7 +1983,7 @@ Expected: FAIL
 
 - [ ] **Step 3: Write minimal implementation**
 
-占位页放在 `internal/server/dist/index.html`，内容为 `<!doctype html><title>备份面板</title>`。前端构建后再把 `web/dist` 复制覆盖到这个目录。`internal/server/static.go`：
+占位页放在 `internal/server/dist/index.html`，内容为 `<!doctype html><title>bak</title>`。前端构建后再把 `web/dist` 复制覆盖到这个目录。`internal/server/static.go`：
 
 ```go
 package server

@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"BaiduYunPanBak/internal/baidutoken"
-	"BaiduYunPanBak/internal/provider/baidu"
+	"bak/internal/baidutoken"
+	"bak/internal/provider/baidu"
 	"context"
 	"fmt"
 	"path/filepath"

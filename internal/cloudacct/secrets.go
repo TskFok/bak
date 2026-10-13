@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"time"
 
-	"BaiduYunPanBak/internal/crypto"
+	"bak/internal/crypto"
 )
 
 type Secrets struct {

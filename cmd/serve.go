@@ -8,10 +8,10 @@ import (
 	"os"
 	"time"
 
-	"BaiduYunPanBak/global"
-	"BaiduYunPanBak/internal/backup"
-	"BaiduYunPanBak/internal/server"
-	"BaiduYunPanBak/internal/store"
+	"bak/global"
+	"bak/internal/backup"
+	"bak/internal/server"
+	"bak/internal/store"
 
 	"github.com/spf13/cobra"
 )

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"BaiduYunPanBak/global"
+	"bak/global"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"

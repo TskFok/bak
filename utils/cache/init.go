@@ -1,7 +1,7 @@
 package cache
 
 import (
-	"BaiduYunPanBak/global"
+	"bak/global"
 	"context"
 	"github.com/redis/go-redis/v9"
 )

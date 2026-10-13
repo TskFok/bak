@@ -1,7 +1,7 @@
 package model
 
 import (
-	"BaiduYunPanBak/global"
+	"bak/global"
 	"fmt"
 )
 

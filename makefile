@@ -23,7 +23,7 @@ conf-rollback:
 	mv utils/conf/conf.yaml.bak utils/conf/conf.yaml
 
 build-file:
-	go build -o baidubak -ldflags "-w -s"  -trimpath main.go
+	go build -o bak -ldflags "-w -s"  -trimpath main.go
 
 build-file-cli:
 	go build -o cli -ldflags "-w -s"  -trimpath bin/cli/main.go
@@ -40,8 +40,8 @@ run-mac: mac
 update:
 	go mody tidy
 
-IMAGE ?= baidubak
-BUILDER ?= baidubak-builder
+IMAGE ?= bak
+BUILDER ?= bak-builder
 
 .PHONY: docker-builder docker-build-linux-amd64 docker-build-linux-arm64
 

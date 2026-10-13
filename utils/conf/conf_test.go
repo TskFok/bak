@@ -1,12 +1,17 @@
 package conf
 
 import (
-	"BaiduYunPanBak/global"
+	"bak/global"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestMain(m *testing.M) {
+	os.Setenv("BAIDUBAK_JWT_SECRET", "test-jwt-secret")
+	os.Exit(m.Run())
+}
 
 func TestInitConfigUsesEmbeddedDSN(t *testing.T) {
 	t.Setenv("BAIDUBAK_MYSQL_DSN", "")
@@ -193,6 +198,57 @@ func TestDotEnvFileOverridesDSNAndRedis(t *testing.T) {
 	if global.RedisUser != "dotenv-user" || global.RedisPassword != "dotenv-secret" {
 		t.Fatalf("redis auth = %q %q", global.RedisUser, global.RedisPassword)
 	}
+}
+
+func TestEnvJWTSecretOverridesEmbedded(t *testing.T) {
+	t.Setenv("BAIDUBAK_JWT_SECRET", "from-env-jwt")
+	t.Setenv("BAIDUBAK_CONFIG", "")
+	withNoDefaultMount(t)
+
+	InitConfig()
+
+	if global.JwtSecret != "from-env-jwt" {
+		t.Fatalf("jwt secret = %q", global.JwtSecret)
+	}
+}
+
+func TestDotEnvJWTSecretUsedWhenEnvEmpty(t *testing.T) {
+	t.Setenv("BAIDUBAK_JWT_SECRET", "")
+	path := writeRaw(t, ".env", "BAIDUBAK_JWT_SECRET=from-dotenv-jwt\n")
+	t.Setenv("BAIDUBAK_CONFIG", path)
+	withNoDefaultMount(t)
+
+	InitConfig()
+
+	if global.JwtSecret != "from-dotenv-jwt" {
+		t.Fatalf("jwt secret = %q", global.JwtSecret)
+	}
+}
+
+func TestMissingJWTSecretPanics(t *testing.T) {
+	t.Setenv("BAIDUBAK_JWT_SECRET", "")
+	t.Setenv("BAIDUBAK_CONFIG", "")
+	withNoDefaultMount(t)
+
+	defer func() {
+		if recover() == nil {
+			t.Fatal("empty jwt secret did not panic")
+		}
+	}()
+	InitConfig()
+}
+
+func TestEmbeddedConfigOmitsJWTSecret(t *testing.T) {
+	data, err := os.ReadFile("conf.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == `secret: ""` || strings.HasPrefix(strings.TrimSpace(line), "secret: \"\"") {
+			return
+		}
+	}
+	t.Fatal("committed conf.yaml still has a jwt secret value")
 }
 
 func TestEnvOverridesDotEnvFile(t *testing.T) {

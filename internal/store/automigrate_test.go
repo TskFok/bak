@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"BaiduYunPanBak/model"
+	"bak/model"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"

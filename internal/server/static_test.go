@@ -20,7 +20,7 @@ func TestEmbeddedIndex(t *testing.T) {
 			t.Fatalf("%s: status = %d", path, rec.Code)
 		}
 		body := rec.Body.String()
-		if !strings.Contains(body, `<div id="root">`) || !strings.Contains(body, "<title>备份面板</title>") {
+		if !strings.Contains(body, `<div id="root">`) || !strings.Contains(body, "<title>bak</title>") {
 			t.Fatalf("%s: body is not the panel page: %q", path, body)
 		}
 		if first == "" {

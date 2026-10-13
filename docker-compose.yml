@@ -1,5 +1,5 @@
 # 先构建镜像：make docker-build-linux-amd64
-# arm64 镜像标签是 baidubak:linux-arm64，由 make docker-build-linux-arm64 生成。
+# arm64 镜像标签是 bak:linux-arm64，由 make docker-build-linux-arm64 生成。
 # 面板通过 ports 映射到宿主机 127.0.0.1。改端口时设置 BAIDUBAK_PORT，例如 BAIDUBAK_PORT=18080 docker compose up -d。
 # 容器内固定监听 0.0.0.0:8080，端口映射才能转到进程；宿主机只绑定 127.0.0.1。
 # 容器使用 bridge 网络，容器内的 127.0.0.1 不是宿主机。
@@ -15,12 +15,12 @@
 # 覆盖内置 MySQL DSN 与 Redis 地址时，环境变量优先于挂载文件：
 #   BAIDUBAK_MYSQL_DSN='user:pass@tcp(10.0.0.8:3306)/yy?charset=utf8mb4&parseTime=True&loc=Local' \
 #   BAIDUBAK_REDIS_HOST=10.0.0.8:6379 BAIDUBAK_REDIS_USER=default BAIDUBAK_REDIS_PASSWORD=secret docker compose up -d
-#   或在 baidubak.volumes 挂载配置：/path/to/conf.yaml:/app/conf.yaml:ro
+#   或在 bak.volumes 挂载配置：/path/to/conf.yaml:/app/conf.yaml:ro
 #   挂到其他路径时设置 BAIDUBAK_CONFIG。
 
 services:
-  baidubak:
-    image: baidubak:linux-amd64
+  bak:
+    image: bak:linux-amd64
     platform: linux/amd64
     ports:
       - "127.0.0.1:${BAIDUBAK_PORT:-8080}:8080"
@@ -34,6 +34,7 @@ services:
       BAIDUBAK_REDIS_HOST: "${BAIDUBAK_REDIS_HOST:-host.docker.internal:6379}"
       BAIDUBAK_REDIS_USER: ${BAIDUBAK_REDIS_USER:-}
       BAIDUBAK_REDIS_PASSWORD: ${BAIDUBAK_REDIS_PASSWORD:-}
+      BAIDUBAK_JWT_SECRET: ${BAIDUBAK_JWT_SECRET:-}
     depends_on:
       mysql:
         condition: service_healthy

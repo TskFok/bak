@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"BaiduYunPanBak/tool/openapi"
+	"bak/tool/openapi"
 )
 
 const partRetries = 3

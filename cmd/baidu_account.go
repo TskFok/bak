@@ -3,9 +3,9 @@ package cmd
 import (
 	"context"
 
-	"BaiduYunPanBak/global"
-	"BaiduYunPanBak/internal/cloudacct"
-	"BaiduYunPanBak/internal/store"
+	"bak/global"
+	"bak/internal/cloudacct"
+	"bak/internal/store"
 )
 
 // saveBaiduAccount 把命令行拿到的百度令牌同步到面板的百度账号，供 baidutoken.Save 作为 accountSaver 使用。

@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"BaiduYunPanBak/internal/provider"
+	"bak/internal/provider"
 )
 
 var _ provider.Provider = (*Client)(nil)

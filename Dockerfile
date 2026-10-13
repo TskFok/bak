@@ -21,13 +21,13 @@ RUN set -eu; \
     export CGO_ENABLED=0; \
     if [ -n "${TARGETOS}" ]; then export GOOS="${TARGETOS}"; fi; \
     if [ -n "${TARGETARCH}" ]; then export GOARCH="${TARGETARCH}"; fi; \
-    go build -o /out/baidubak -ldflags "-w -s" -trimpath .
+    go build -o /out/bak -ldflags "-w -s" -trimpath .
 
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata \
     && mkdir -p /app/runtime/chunks
 WORKDIR /app
-COPY --from=build /out/baidubak /app/baidubak
+COPY --from=build /out/bak /app/bak
 EXPOSE 8080
-ENTRYPOINT ["/app/baidubak"]
+ENTRYPOINT ["/app/bak"]
 CMD ["serve", "--addr", "127.0.0.1:8080"]

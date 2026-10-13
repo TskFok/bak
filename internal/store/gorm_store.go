@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"BaiduYunPanBak/internal/auth"
-	"BaiduYunPanBak/internal/backup"
-	"BaiduYunPanBak/model"
+	"bak/internal/auth"
+	"bak/internal/backup"
+	"bak/model"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"

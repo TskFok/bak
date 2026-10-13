@@ -6,10 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"BaiduYunPanBak/global"
-	"BaiduYunPanBak/internal/cloudacct"
-	"BaiduYunPanBak/internal/store"
-	"BaiduYunPanBak/model"
+	"bak/global"
+	"bak/internal/cloudacct"
+	"bak/internal/store"
+	"bak/model"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"

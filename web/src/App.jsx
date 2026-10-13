@@ -275,7 +275,7 @@ function LoginForm({ onDone }) {
   }
 
   return (
-    <AuthShell title="登录备份面板">
+    <AuthShell title="登录 bak">
       <form onSubmit={submit} noValidate>
         <TextField label="用户名" value={form.username} onChange={(v) => setForm((f) => ({ ...f, username: v }))} autoComplete="username" />
         <TextField label="密码" type="password" value={form.password} onChange={(v) => setForm((f) => ({ ...f, password: v }))} autoComplete="current-password" />
@@ -963,7 +963,7 @@ function Shell({ username, onLogout, logoutError }) {
   return (
     <div className="layout">
       <aside className="sidebar">
-        <div className="brand">备份面板</div>
+        <div className="brand">bak</div>
         <nav aria-label="主导航">
           <ul>
             {NAV.map((n) => (

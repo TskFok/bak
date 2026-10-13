@@ -15,7 +15,7 @@ app:
   mode: debug #release(gin.ReleaseMode ) test(gin.TestMode) debug(gin.DebugMode )
 
 jwt:
-  secret:  #jwt的secret
+  secret: "" # 留空。真实密钥放在环境变量 BAIDUBAK_JWT_SECRET，不要写入仓库
   expire: 3 #过期时间3小时
 
 logger:

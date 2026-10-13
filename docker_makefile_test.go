@@ -9,10 +9,10 @@ import (
 
 func TestMakeDockerBuildLinuxAmd64(t *testing.T) {
 	out := dryRunMake(t, "docker-build-linux-amd64")
-	mustContain(t, out, "--builder baidubak-builder")
+	mustContain(t, out, "--builder bak-builder")
 	mustContain(t, out, "--platform linux/amd64")
 	mustContain(t, out, "--load")
-	mustContain(t, out, "-t baidubak:linux-amd64")
+	mustContain(t, out, "-t bak:linux-amd64")
 	if strings.Contains(out, "linux/arm64") {
 		t.Fatalf("amd64 构建命令包含 arm64:\n%s", out)
 	}
@@ -20,22 +20,22 @@ func TestMakeDockerBuildLinuxAmd64(t *testing.T) {
 
 func TestMakeDockerBuildLinuxArm64(t *testing.T) {
 	out := dryRunMake(t, "docker-build-linux-arm64")
-	mustContain(t, out, "--builder baidubak-builder")
+	mustContain(t, out, "--builder bak-builder")
 	mustContain(t, out, "--platform linux/arm64")
 	mustContain(t, out, "--load")
-	mustContain(t, out, "-t baidubak:linux-arm64")
+	mustContain(t, out, "-t bak:linux-arm64")
 	if strings.Contains(out, "linux/amd64") {
 		t.Fatalf("arm64 构建命令包含 amd64:\n%s", out)
 	}
 }
 
 func TestMakeDockerImageOverride(t *testing.T) {
-	cmd := exec.Command("make", "-n", "IMAGE=registry.example.com/baidubak", "docker-build-linux-amd64")
+	cmd := exec.Command("make", "-n", "IMAGE=registry.example.com/bak", "docker-build-linux-amd64")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("make -n 失败: %v\n%s", err, out)
 	}
-	mustContain(t, string(out), "-t registry.example.com/baidubak:linux-amd64")
+	mustContain(t, string(out), "-t registry.example.com/bak:linux-amd64")
 }
 
 func TestEnvExample(t *testing.T) {
@@ -51,6 +51,7 @@ func TestEnvExample(t *testing.T) {
 	mustContain(t, text, "BAIDUBAK_REDIS_HOST=host.docker.internal:6379")
 	mustContain(t, text, "BAIDUBAK_REDIS_USER=")
 	mustContain(t, text, "BAIDUBAK_REDIS_PASSWORD=")
+	mustContain(t, text, "BAIDUBAK_JWT_SECRET=")
 }
 
 func TestDockerComposeExample(t *testing.T) {
@@ -59,7 +60,7 @@ func TestDockerComposeExample(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	mustContain(t, text, "image: baidubak:linux-amd64")
+	mustContain(t, text, "image: bak:linux-amd64")
 	mustContain(t, text, "platform: linux/amd64")
 	if strings.Contains(text, "network_mode:") {
 		t.Fatalf("compose 仍使用 network_mode:\n%s", text)
@@ -75,6 +76,7 @@ func TestDockerComposeExample(t *testing.T) {
 	mustContain(t, text, "host.docker.internal:6379")
 	mustContain(t, text, "BAIDUBAK_REDIS_USER")
 	mustContain(t, text, "BAIDUBAK_REDIS_PASSWORD")
+	mustContain(t, text, "BAIDUBAK_JWT_SECRET")
 	mustContain(t, text, "/app/conf.yaml")
 	mustContain(t, text, "required: false")
 	mustContain(t, text, `profiles: ["mysql"]`)
@@ -96,6 +98,8 @@ func TestDockerfileCrossCompiles(t *testing.T) {
 	mustContain(t, text, "ARG TARGETARCH")
 	mustContain(t, text, "--platform=$BUILDPLATFORM")
 	mustContain(t, text, "CGO_ENABLED=0")
+	mustContain(t, text, "/out/bak")
+	mustContain(t, text, "ENTRYPOINT [\"/app/bak\"]")
 }
 
 func dryRunMake(t *testing.T, target string) string {

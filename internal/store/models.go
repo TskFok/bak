@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"BaiduYunPanBak/global"
-	"BaiduYunPanBak/model"
+	"bak/global"
+	"bak/model"
 
 	"gorm.io/gorm"
 )

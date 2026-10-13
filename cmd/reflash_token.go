@@ -4,9 +4,9 @@ Copyright © 2023 NAME HERE <EMAIL ADDRESS>
 package cmd
 
 import (
-	"BaiduYunPanBak/global"
-	"BaiduYunPanBak/internal/baidutoken"
-	"BaiduYunPanBak/tool/openapi"
+	"bak/global"
+	"bak/internal/baidutoken"
+	"bak/tool/openapi"
 	"context"
 	"fmt"
 	"github.com/spf13/cobra"

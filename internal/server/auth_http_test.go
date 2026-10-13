@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"BaiduYunPanBak/internal/auth"
+	"bak/internal/auth"
 )
 
 type memSessions struct{ m map[string]uint }

@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"BaiduYunPanBak/internal/auth"
-	"BaiduYunPanBak/internal/backup"
+	"bak/internal/auth"
+	"bak/internal/backup"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"

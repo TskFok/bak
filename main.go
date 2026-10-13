@@ -1,8 +1,8 @@
 package main
 
 import (
-	"BaiduYunPanBak/bootstrap"
-	"BaiduYunPanBak/cmd"
+	"bak/bootstrap"
+	"bak/cmd"
 )
 
 func main() {

@@ -5,10 +5,10 @@ import (
 	"errors"
 	"time"
 
-	"BaiduYunPanBak/global"
-	"BaiduYunPanBak/internal/cloudacct"
-	"BaiduYunPanBak/model"
-	"BaiduYunPanBak/utils/cache"
+	"bak/global"
+	"bak/internal/cloudacct"
+	"bak/model"
+	"bak/utils/cache"
 )
 
 // 测试里替换这两个变量，避免连接真实的 MySQL 和 Redis。

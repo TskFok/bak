@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"time"
 
-	"BaiduYunPanBak/internal/provider"
+	"bak/internal/provider"
 )
 
 var (

@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"BaiduYunPanBak/global"
-	"BaiduYunPanBak/internal/cloudacct"
-	"BaiduYunPanBak/model"
+	"bak/global"
+	"bak/internal/cloudacct"
+	"bak/model"
 )
 
 type calls struct {

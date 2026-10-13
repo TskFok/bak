@@ -1,11 +1,11 @@
 package bootstrap
 
 import (
-	"BaiduYunPanBak/global"
-	"BaiduYunPanBak/internal/store"
-	"BaiduYunPanBak/utils/cache"
-	"BaiduYunPanBak/utils/conf"
-	"BaiduYunPanBak/utils/database"
+	"bak/global"
+	"bak/internal/store"
+	"bak/utils/cache"
+	"bak/utils/conf"
+	"bak/utils/database"
 )
 
 func Init() {

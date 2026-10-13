@@ -1,7 +1,7 @@
 package conf
 
 import (
-	"BaiduYunPanBak/global"
+	"bak/global"
 	"bytes"
 	_ "embed"
 	"fmt"
@@ -33,6 +33,7 @@ func InitConfig() {
 	setFromEnv("redis.host", "BAIDUBAK_REDIS_HOST")
 	setFromEnv("redis.user", "BAIDUBAK_REDIS_USER")
 	setFromEnv("redis.password", "BAIDUBAK_REDIS_PASSWORD")
+	setFromEnv("jwt.secret", "BAIDUBAK_JWT_SECRET")
 
 	global.RedisUser = viper.Get("redis.user").(string)
 	global.RedisPassword = viper.Get("redis.password").(string)
@@ -41,7 +42,10 @@ func InitConfig() {
 	global.MysqlPrefix = viper.Get("mysql.prefix").(string)
 	global.BaiduYunClientId = viper.Get("baidu_yun.client_id").(string)
 	global.BaiduYunClientSecret = viper.Get("baidu_yun.client_secret").(string)
-	global.JwtSecret = viper.GetString("jwt.secret")
+	global.JwtSecret = strings.TrimSpace(viper.GetString("jwt.secret"))
+	if global.JwtSecret == "" {
+		panic("jwt.secret 为空：请设置环境变量 BAIDUBAK_JWT_SECRET，不要把密钥写入仓库")
+	}
 	global.JwtExpire = viper.GetInt("jwt.expire")
 	if global.JwtExpire <= 0 {
 		global.JwtExpire = 3
@@ -102,6 +106,8 @@ func mergeDotEnv(data []byte) {
 			setIfNotBlank("redis.user", val)
 		case "BAIDUBAK_REDIS_PASSWORD":
 			setIfNotBlank("redis.password", val)
+		case "BAIDUBAK_JWT_SECRET":
+			setIfNotBlank("jwt.secret", val)
 		}
 	}
 }

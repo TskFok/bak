@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"BaiduYunPanBak/internal/backup"
-	"BaiduYunPanBak/internal/cloudacct"
-	"BaiduYunPanBak/internal/provider"
-	"BaiduYunPanBak/internal/store"
+	"bak/internal/backup"
+	"bak/internal/cloudacct"
+	"bak/internal/provider"
+	"bak/internal/store"
 )
 
 func TestScheduleRunnerRefreshesAndRunsAsSchedule(t *testing.T) {

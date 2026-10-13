@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"time"
 
-	"BaiduYunPanBak/global"
-	"BaiduYunPanBak/internal/auth"
+	"bak/global"
+	"bak/internal/auth"
 )
 
 var _ auth.SessionStore = RedisSessions{}

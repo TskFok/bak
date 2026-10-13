@@ -7,11 +7,11 @@ import (
 	"math"
 	"time"
 
-	"BaiduYunPanBak/global"
-	"BaiduYunPanBak/internal/cloudacct"
-	"BaiduYunPanBak/internal/store"
-	"BaiduYunPanBak/model"
-	"BaiduYunPanBak/tool/openapi"
+	"bak/global"
+	"bak/internal/cloudacct"
+	"bak/internal/store"
+	"bak/model"
+	"bak/tool/openapi"
 )
 
 var errNoDB = errors.New("数据库未初始化")

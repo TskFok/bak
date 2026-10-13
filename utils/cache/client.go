@@ -1,7 +1,7 @@
 package cache
 
 import (
-	"BaiduYunPanBak/global"
+	"bak/global"
 	"context"
 	"fmt"
 	"time"

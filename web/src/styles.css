@@ -540,6 +540,59 @@ tbody tr:last-child td {
   border-bottom: 0;
 }
 
+/* ---------- 打包进度 ---------- */
+
+.pack-progress {
+  margin: 0.75rem 0 0.25rem;
+  max-width: 28rem;
+}
+
+.progress-track {
+  height: 0.75rem;
+  overflow: hidden;
+  background: var(--running-bg);
+  border: 1px solid #9ec0ea;
+  border-radius: 999px;
+}
+
+.progress-fill {
+  height: 100%;
+  width: 100%;
+  background: var(--running);
+  transform: scaleX(0);
+  transform-origin: left center;
+}
+
+.progress-fill-indeterminate {
+  width: 40%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .progress-fill {
+    transition: transform 200ms ease;
+  }
+
+  .progress-fill-indeterminate {
+    animation: progress-indeterminate 1.2s ease-in-out infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .progress-fill-indeterminate {
+    width: 100%;
+    opacity: 0.65;
+  }
+}
+
+@keyframes progress-indeterminate {
+  from {
+    transform: translateX(-120%);
+  }
+  to {
+    transform: translateX(280%);
+  }
+}
+
 /* ---------- 窄屏 ---------- */
 
 @media (max-width: 767px) {

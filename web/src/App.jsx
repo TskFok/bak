@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ApiError, request, setUnauthorizedHandler } from "./api.js";
+import { PACK_UPLOAD_NOTE, parsePackProgress } from "./packProgress.js";
 
 const POLL_MS = 3000;
 
@@ -983,6 +984,40 @@ function FileTable({ files }) {
   );
 }
 
+function PackProgress({ note }) {
+  const pack = parsePackProgress(note);
+  if (pack) {
+    const label = `正在压缩 ${pack.done}/${pack.total}（${pack.percent}%）`;
+    return (
+      <div className="pack-progress">
+        <div
+          className="progress-track"
+          role="progressbar"
+          aria-label="压缩进度"
+          aria-valuemin={0}
+          aria-valuemax={pack.total}
+          aria-valuenow={pack.done}
+          aria-valuetext={label}
+        >
+          <div className="progress-fill" style={{ transform: `scaleX(${pack.done / pack.total})` }} />
+        </div>
+        <p role="status">{label}。每 3 秒自动刷新。</p>
+      </div>
+    );
+  }
+  if (note === PACK_UPLOAD_NOTE) {
+    return (
+      <div className="pack-progress">
+        <div className="progress-track" role="progressbar" aria-label="上传进度" aria-valuetext={PACK_UPLOAD_NOTE}>
+          <div className="progress-fill progress-fill-indeterminate" />
+        </div>
+        <p role="status">{PACK_UPLOAD_NOTE}。每 3 秒自动刷新。</p>
+      </div>
+    );
+  }
+  return <p role="status">{note ? `${note}。每 3 秒自动刷新。` : "正在备份，每 3 秒自动刷新。"}</p>;
+}
+
 function RunDetailPage({ id }) {
   const run = useLoad(() => request(`/api/runs/${id}`), String(id));
   const tasks = useLoad(() => request("/api/tasks"));
@@ -1008,9 +1043,7 @@ function RunDetailPage({ id }) {
           <p>
             <StatusBadge status={r.status} />
           </p>
-          {r.status === "running" && (
-            <p role="status">{r.progressNote ? `${r.progressNote}。每 3 秒自动刷新。` : "正在备份，每 3 秒自动刷新。"}</p>
-          )}
+          {r.status === "running" && <PackProgress note={r.progressNote} />}
           <dl className="meta">
             <div>
               <dt>任务</dt>
